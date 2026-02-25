@@ -24,16 +24,16 @@ export class APIRouter {
       const stats = this.datastore.getStats();
       const sessions = this.datastore.getSessions();
       const now = Date.now();
-      const twoMinAgo = now - 120000; // 2 minutes
+      const fiveMinAgo = now - 300000; // 5 minutes - more lenient for AI tasks
       
-      // Count active sessions (updated in last 2 minutes)
+      // Count active sessions (updated in last 5 minutes)
       const activeSessions = sessions.filter(s => 
-        s.updatedAt && s.updatedAt > twoMinAgo
+        s.updatedAt && s.updatedAt > fiveMinAgo
       ).length;
       
       // Count active tasks (from sessions with recent updates)
       const activeTasks = sessions.filter(s =>
-        s.updatedAt && s.updatedAt > twoMinAgo && s.agent !== 'main'
+        s.updatedAt && s.updatedAt > fiveMinAgo && s.agent !== 'main'
       ).length;
       
       stats.activeSessions = activeSessions;
@@ -47,12 +47,12 @@ export class APIRouter {
     this.router.get('/sessions', (req, res) => {
       const sessions = this.datastore.getSessions();
       const now = Date.now();
-      const twoMinAgo = now - 120000;
+      const fiveMinAgo = now - 300000;
       
       // Add dynamic status based on current time
       const sessionsWithDynamicStatus = sessions.map(s => ({
         ...s,
-        isActive: s.updatedAt && s.updatedAt > twoMinAgo
+        isActive: s.updatedAt && s.updatedAt > fiveMinAgo
       }));
       
       res.json(sessionsWithDynamicStatus);

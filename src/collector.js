@@ -187,21 +187,32 @@ export class AgentCollector extends EventEmitter {
       const stats = await fs.stat(filePath);
       const now = Date.now();
       const fileAge = now - stats.mtime.getTime();
-      const isActive = fileAge < 120000; // 2 minutes
+      const isActive = fileAge < 300000; // 5 minutes - more lenient for AI tasks
       
       // Calculate progress based on task items
       const completedItems = taskItems.filter(t => t.status === 'completed').length;
-      const progress = taskItems.length > 0 
-        ? Math.round((completedItems / taskItems.length) * 100)
-        : Math.min(messageCount * 5, 100); // Estimate based on messages
+      let progress = 0;
+      if (taskItems.length > 0) {
+        progress = Math.round((completedItems / taskItems.length) * 100);
+      } else if (messageCount > 0 && !isActive) {
+        // Only show 100% if session is actually completed (not active)
+        progress = Math.min(messageCount * 8, 95); // Cap at 95% for active tasks
+      } else if (isActive) {
+        // Active session - show in-progress based on message count
+        progress = Math.min(messageCount * 5, 90); // Cap at 90% for active
+      }
       
       // Calculate time spent
       const timeSpent = stats.mtime.getTime() - stats.birthtime.getTime();
       
-      // Generate agent name
-      const agentNames = ['Agent 一號', 'Agent 二號', 'Agent 三號', 'Agent 四號', 'Agent 五號'];
-      const agentIndex = Math.abs(this.hashCode(sessionId)) % agentNames.length;
-      const displayAgentName = agentNames[agentIndex];
+      // Generate agent name based on agent type and session
+      const agentDisplayNames = {
+        'main': ['🧑‍💼 主 Agent', '👨‍💻 主程式設計師', '📋 專案管理員', '🎯 任務調度員'],
+        'coding-agent': ['💻 程式碼 Agent', '🔧 開發 Agent', '⚙️ 技術 Agent', '🛠️ 實作 Agent']
+      };
+      const names = agentDisplayNames[agentName] || ['🤖 Agent'];
+      const agentIndex = Math.abs(this.hashCode(sessionId)) % names.length;
+      const displayAgentName = names[agentIndex];
       
       const sessionData = {
         id: sessionId,
