@@ -6,9 +6,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export class APIRouter {
-  constructor(datastore, notifier) {
+  constructor(datastore, notifier, collector) {
     this.datastore = datastore;
     this.notifier = notifier;
+    this.collector = collector;
     this.router = express.Router();
     this.setupRoutes();
   }
@@ -17,6 +18,44 @@ export class APIRouter {
     // Health check
     this.router.get('/health', (req, res) => {
       res.json({ status: 'ok', timestamp: Date.now() });
+    });
+
+    // Departments
+    this.router.get('/departments', (req, res) => {
+      const departments = this.collector.getDepartments();
+      const sessions = this.datastore.getSessions();
+      const now = Date.now();
+      const fiveMinAgo = now - 300000;
+      
+      // Group sessions by department and calculate stats
+      const deptStats = {};
+      for (const dept of departments) {
+        const deptSessions = sessions.filter(s => s.department === dept.id);
+        const activeSessions = deptSessions.filter(s => s.updatedAt && s.updatedAt > fiveMinAgo);
+        deptStats[dept.id] = {
+          totalAgents: deptSessions.length,
+          activeAgents: activeSessions.length
+        };
+      }
+      
+      // Add department stats
+      const departmentsWithStats = departments.map(d => ({
+        ...d,
+        stats: deptStats[d.id] || { totalAgents: 0, activeAgents: 0 }
+      }));
+      
+      res.json(departmentsWithStats);
+    });
+
+    this.router.patch('/departments/:id', (req, res) => {
+      const { id } = req.params;
+      const { name } = req.body;
+      
+      if (name) {
+        this.collector.updateDepartmentName(id, name);
+      }
+      
+      res.json({ success: true, id, name });
     });
 
     // Stats

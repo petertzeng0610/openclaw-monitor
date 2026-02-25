@@ -38,7 +38,7 @@ class OpenClawMonitor {
   }
 
   setupRoutes() {
-    const api = new APIRouter(this.datastore, this.notifier);
+    const api = new APIRouter(this.datastore, this.notifier, this.collector);
     this.app.use('/api', api.router);
     
     this.app.get('/dashboard', (req, res) => {
@@ -93,7 +93,7 @@ class OpenClawMonitor {
 
     // Periodic refresh every 15 seconds to keep data fresh
     setInterval(async () => {
-      await this.collector.collectAllAgentData();
+      await this.collector.collectAllData();
       this.broadcast({ type: 'refresh', data: { timestamp: Date.now() } });
     }, 15000);
 

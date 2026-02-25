@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OpenClaw Agent 監控面板</title>
+  <title>OpenClaw Agent 監控中心</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -11,13 +11,14 @@
     .gradient-bg { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }
     .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
     .status-dot { animation: pulse 2s infinite; }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
     .scrollbar-thin::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+    .dept-header { transition: all 0.3s ease; }
+    .dept-header:hover { background: rgba(255,255,255,0.1); }
+    .agent-card { transition: all 0.2s ease; }
+    .agent-card:hover { transform: translateX(4px); }
   </style>
 </head>
 <body class="gradient-bg min-h-screen text-white">
@@ -25,10 +26,10 @@
   <header class="border-b border-white/10 px-6 py-4">
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-4">
-        <div class="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center text-xl">🦷</div>
+        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-xl">🏢</div>
         <div>
-          <h1 class="text-xl font-bold">OpenClaw Agent 監控面板</h1>
-          <p class="text-sm text-gray-400">Agent 團隊管理儀表板</p>
+          <h1 class="text-xl font-bold">Agent 監控中心</h1>
+          <p class="text-sm text-gray-400">多部門 Agent 作業監控系統</p>
         </div>
       </div>
       <div class="flex items-center gap-4">
@@ -36,9 +37,7 @@
           <span id="connectionStatus" class="w-2 h-2 bg-green-400 rounded-full status-dot"></span>
           <span class="text-sm text-gray-400">已連線</span>
         </div>
-        <button onclick="openAgentTeamModal()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition">
-          + 新建 Agent 團隊
-        </button>
+        <button onclick="refreshData()" class="bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg text-sm">🔄 刷新</button>
       </div>
     </div>
   </header>
@@ -49,142 +48,66 @@
       <div class="card rounded-xl p-5">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-gray-400 text-sm">作用中的工作階段</p>
-            <p id="statActiveSessions" class="text-3xl font-bold mt-1">0</p>
+            <p class="text-gray-400 text-sm">部門總數</p>
+            <p id="statDepartments" class="text-3xl font-bold mt-1">0</p>
           </div>
-          <div class="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center text-2xl">🔵</div>
+          <div class="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center text-2xl">🏢</div>
         </div>
       </div>
       <div class="card rounded-xl p-5">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-gray-400 text-sm">執行中的任務</p>
-            <p id="statRunningTasks" class="text-3xl font-bold mt-1 text-yellow-400">0</p>
+            <p class="text-gray-400 text-sm">作用中 Agent</p>
+            <p id="statActiveAgents" class="text-3xl font-bold mt-1 text-green-400">0</p>
           </div>
-          <div class="w-12 h-12 bg-yellow-500/20 rounded-lg flex items-center justify-center text-2xl">⚡</div>
+          <div class="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center text-2xl">⚡</div>
         </div>
       </div>
       <div class="card rounded-xl p-5">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-gray-400 text-sm">已完成任務</p>
-            <p id="statCompleted" class="text-3xl font-bold mt-1 text-green-400">0</p>
+            <p class="text-gray-400 text-sm">總任務數</p>
+            <p id="statTotalTasks" class="text-3xl font-bold mt-1">0</p>
           </div>
-          <div class="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center text-2xl">✅</div>
+          <div class="w-12 h-12 bg-yellow-500/20 rounded-lg flex items-center justify-center text-2xl">📋</div>
         </div>
       </div>
       <div class="card rounded-xl p-5">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-gray-400 text-sm">總報告數</p>
-            <p id="statReports" class="text-3xl font-bold mt-1 text-purple-400">0</p>
+            <p class="text-gray-400 text-sm">已完成</p>
+            <p id="statCompleted" class="text-3xl font-bold mt-1 text-purple-400">0</p>
           </div>
-          <div class="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center text-2xl">📊</div>
+          <div class="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center text-2xl">✅</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Main Content -->
+  <!-- Departments & Agents -->
   <div class="px-6 pb-6">
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <!-- Agent Sessions -->
-      <div class="lg:col-span-2 card rounded-xl">
-        <div class="p-4 border-b border-white/10">
-          <h2 class="font-semibold">作用中的 Agents</h2>
-        </div>
-        <div id="agentsList" class="p-4 space-y-3 max-h-96 overflow-y-auto scrollbar-thin">
-          <p class="text-gray-500 text-center py-8">目前沒有作用中的 Agents</p>
-        </div>
-      </div>
-
-      <!-- Task Queue -->
-      <div class="card rounded-xl">
-        <div class="p-4 border-b border-white/10">
-          <h2 class="font-semibold">任務佇列</h2>
-        </div>
-        <div id="taskQueue" class="p-4 space-y-3 max-h-96 overflow-y-auto scrollbar-thin">
-          <p class="text-gray-500 text-center py-8">目前沒有待處理的任務</p>
-        </div>
-      </div>
+    <div id="departmentsList" class="space-y-6">
+      <!-- Departments will be rendered here -->
     </div>
   </div>
 
-  <!-- Report Section -->
-  <div class="px-6 pb-6">
-    <div class="card rounded-xl">
+  <!-- Edit Department Modal -->
+  <div id="editDeptModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50">
+    <div class="card rounded-xl w-full max-w-md mx-4">
       <div class="p-4 border-b border-white/10 flex items-center justify-between">
-        <h2 class="font-semibold text-lg">📋 完成報告</h2>
-        <div class="flex gap-2">
-          <select id="reportFilter" class="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-sm">
-            <option value="all">全部報告</option>
-            <option value="today">今天</option>
-            <option value="week">本週</option>
-          </select>
-        </div>
+        <h3 class="font-semibold">編輯部門名稱</h3>
+        <button onclick="closeEditDeptModal()" class="text-gray-400 hover:text-white">✕</button>
       </div>
-      <div id="reportsList" class="p-4 space-y-4 max-h-[500px] overflow-y-auto scrollbar-thin">
-        <p class="text-gray-500 text-center py-8">目前沒有完成報告</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- Agent Team Modal -->
-  <div id="agentTeamModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50">
-    <div class="card rounded-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden">
-      <div class="p-4 border-b border-white/10 flex items-center justify-between">
-        <h3 class="font-semibold text-lg">建立 Agent 團隊任務</h3>
-        <button onclick="closeAgentTeamModal()" class="text-gray-400 hover:text-white">✕</button>
-      </div>
-      <div class="p-4 overflow-y-auto max-h-[70vh]">
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-gray-400 mb-2">任務描述</label>
-            <textarea id="taskDescription" class="w-full bg-white/5 border border-white/20 rounded-lg p-3 text-white h-24" placeholder="描述您希望 Agent 團隊執行的任務..."></textarea>
-          </div>
-          <div>
-            <label class="block text-sm text-gray-400 mb-2">選擇 Agents</label>
-            <div id="agentSelection" class="grid grid-cols-2 gap-2">
-              <label class="flex items-center gap-2 p-2 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10">
-                <input type="checkbox" value="coder" checked class="accent-blue-500">
-                <span>💻 程式碼 Agent</span>
-              </label>
-              <label class="flex items-center gap-2 p-2 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10">
-                <input type="checkbox" value="researcher" checked class="accent-blue-500">
-                <span>🔍 研究 Agent</span>
-              </label>
-              <label class="flex items-center gap-2 p-2 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10">
-                <input type="checkbox" value="tester" checked class="accent-blue-500">
-                <span>🧪 測試 Agent</span>
-              </label>
-              <label class="flex items-center gap-2 p-2 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10">
-                <input type="checkbox" value="deployer" class="accent-blue-500">
-                <span>🚀 部署 Agent</span>
-              </label>
-            </div>
-          </div>
-          <div>
-            <label class="block text-sm text-gray-400 mb-2">工作流程步驟</label>
-            <div id="workflowSteps" class="space-y-2">
-              <div class="flex gap-2">
-                <input type="text" value="1. 分析需求" class="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-sm" readonly>
-              </div>
-              <div class="flex gap-2">
-                <input type="text" value="2. 實作解決方案" class="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-sm" readonly>
-              </div>
-              <div class="flex gap-2">
-                <input type="text" value="3. 執行測試" class="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-sm" readonly>
-              </div>
-              <div class="flex gap-2">
-                <input type="text" value="4. 生成報告" class="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-sm" readonly>
-              </div>
-            </div>
-          </div>
+      <div class="p-4">
+        <input type="hidden" id="editDeptId">
+        <div>
+          <label class="block text-sm text-gray-400 mb-2">部門名稱</label>
+          <input type="text" id="editDeptName" class="w-full bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-white" placeholder="輸入部門名稱">
         </div>
       </div>
       <div class="p-4 border-t border-white/10 flex justify-end gap-3">
-        <button onclick="closeAgentTeamModal()" class="px-4 py-2 text-gray-400 hover:text-white">取消</button>
-        <button onclick="submitAgentTeam()" class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg font-medium">執行團隊任務</button>
+        <button onclick="closeEditDeptModal()" class="px-4 py-2 text-gray-400 hover:text-white">取消</button>
+        <button onclick="saveDeptName()" class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg font-medium">儲存</button>
       </div>
     </div>
   </div>
@@ -193,25 +116,20 @@
     const API_BASE = '';
     let ws = null;
     let stats = {};
+    let departments = [];
     let sessions = [];
-    let tasks = [];
-    let reports = [];
 
-    // WebSocket connection
     function connectWebSocket() {
       ws = new WebSocket(`ws://${window.location.host}`);
-      
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         handleMessage(data);
       };
-      
       ws.onclose = () => {
         document.getElementById('connectionStatus').classList.remove('bg-green-400');
         document.getElementById('connectionStatus').classList.add('bg-red-400');
         setTimeout(connectWebSocket, 3000);
       };
-      
       ws.onopen = () => {
         document.getElementById('connectionStatus').classList.remove('bg-red-400');
         document.getElementById('connectionStatus').classList.add('bg-green-400');
@@ -219,61 +137,141 @@
     }
 
     function handleMessage(data) {
-      switch(data.type) {
-        case 'agentUpdate':
-          refreshData();
-          break;
-        case 'taskUpdate':
-          refreshTasks();
-          break;
-        case 'taskComplete':
-          refreshReports();
-          break;
+      if (data.type === 'refresh' || data.type === 'agentUpdate') {
+        refreshData();
       }
     }
 
     async function refreshData() {
       try {
-        const [statsRes, sessionsRes] = await Promise.all([
+        const [deptRes, statsRes, sessionsRes] = await Promise.all([
+          fetch(`${API_BASE}/api/departments`),
           fetch(`${API_BASE}/api/stats`),
           fetch(`${API_BASE}/api/sessions`)
         ]);
         
+        departments = await deptRes.json();
         stats = await statsRes.json();
         sessions = await sessionsRes.json();
         
         updateStats();
-        updateAgentsList();
+        renderDepartments();
       } catch (e) {
         console.error('Error refreshing data:', e);
       }
     }
 
-    async function refreshTasks() {
-      try {
-        const res = await fetch(`${API_BASE}/api/tasks`);
-        tasks = await res.json();
-        updateTaskQueue();
-      } catch (e) {
-        console.error('Error refreshing tasks:', e);
-      }
-    }
-
-    async function refreshReports() {
-      try {
-        const res = await fetch(`${API_BASE}/api/reports`);
-        reports = await res.json();
-        updateReportsList();
-      } catch (e) {
-        console.error('Error refreshing reports:', e);
-      }
-    }
-
     function updateStats() {
-      document.getElementById('statActiveSessions').textContent = stats.activeSessions || 0;
-      document.getElementById('statRunningTasks').textContent = stats.activeTasks || 0;
+      document.getElementById('statDepartments').textContent = departments.length || 0;
+      document.getElementById('statActiveAgents').textContent = stats.activeSessions || 0;
+      document.getElementById('statTotalTasks').textContent = stats.totalSessions || 0;
       document.getElementById('statCompleted').textContent = stats.completedTasks || 0;
-      document.getElementById('statReports').textContent = stats.totalReports || 0;
+    }
+
+    function renderDepartments() {
+      const container = document.getElementById('departmentsList');
+      
+      if (departments.length === 0) {
+        container.innerHTML = '<div class="card rounded-xl p-8 text-center"><p class="text-gray-500">正在偵測部門...</p></div>';
+        return;
+      }
+      
+      container.innerHTML = departments.map(dept => {
+        const deptSessions = sessions.filter(s => s.department === dept.id);
+        const activeSessions = deptSessions.filter(s => s.isActive);
+        
+        // Get department icon based on type
+        const deptIcon = dept.type === 'openclaw' ? '🦷' : '🦁';
+        const deptColor = dept.type === 'openclaw' ? 'from-blue-600 to-blue-800' : 'from-purple-600 to-purple-800';
+        
+        return `
+        <div class="card rounded-xl overflow-hidden">
+          <!-- Department Header -->
+          <div class="dept-header flex items-center justify-between p-4 bg-gradient-to-r ${deptColor}">
+            <div class="flex items-center gap-4">
+              <div class="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center text-2xl">
+                ${deptIcon}
+              </div>
+              <div>
+                <h2 class="text-lg font-bold">${dept.name}</h2>
+                <p class="text-xs text-white/70">${dept.type === 'openclaw' ? 'OpenClaw 開發平台' : 'Claude Code 協助工具'} • ${deptSessions.length} 個 Agent</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="text-right">
+                <p class="text-2xl font-bold">${activeSessions.length}</p>
+                <p class="text-xs text-white/70">作用中</p>
+              </div>
+              <button onclick="openEditDeptModal('${dept.id}', '${dept.name}')" class="bg-white/20 hover:bg-white/30 p-2 rounded-lg text-sm">✏️</button>
+            </div>
+          </div>
+          
+          <!-- Agents Grid -->
+          <div class="p-4">
+            ${deptSessions.length === 0 ? '<p class="text-gray-500 text-center py-4">此部門目前沒有 Agent 任務</p>' : `
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              ${deptSessions.slice(0, 6).map(session => renderAgentCard(session)).join('')}
+            </div>
+            `}
+          </div>
+        </div>
+        `;
+      }).join('');
+    }
+
+    function renderAgentCard(session) {
+      const active = session.isActive;
+      const taskItems = session.taskItems || [];
+      
+      return `
+      <div class="agent-card bg-white/5 rounded-lg p-4 ${active ? 'border-l-4 border-l-green-500' : ''}">
+        <div class="flex items-start justify-between mb-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 ${active ? 'bg-green-500/20' : 'bg-gray-500/20'} rounded-lg flex items-center justify-center text-lg">
+              ${active ? '⚡' : '💤'}
+            </div>
+            <div>
+              <p class="font-semibold text-sm">${session.agentDisplayName}</p>
+              <p class="text-xs text-blue-300">${session.taskName || '未命名任務'}</p>
+            </div>
+          </div>
+          <span class="px-2 py-1 text-xs rounded-full ${active ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}">
+            ${active ? '作用中' : '已完成'}
+          </span>
+        </div>
+        
+        <!-- Progress -->
+        <div class="mb-3">
+          <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+            <span>進度: ${session.progress || 0}%</span>
+            <span>⏱️ ${formatTimeSpent(session.timeSpent)}</span>
+          </div>
+          <div class="w-full bg-white/10 rounded-full h-2">
+            <div class="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all" style="width: ${session.progress || 0}%"></div>
+          </div>
+        </div>
+        
+        <!-- Task Items -->
+        ${taskItems.length > 0 ? `
+        <div class="text-xs text-gray-400 mb-2">工作項目:</div>
+        <div class="space-y-1 max-h-24 overflow-y-auto">
+          ${taskItems.map(item => `
+            <div class="flex items-center gap-2 text-xs">
+              <span class="${item.status === 'completed' ? 'text-green-400' : 'text-yellow-400'}">
+                ${item.status === 'completed' ? '✓' : '○'}
+              </span>
+              <span class="${item.status === 'completed' ? 'text-gray-500 line-through' : 'text-gray-300'}">${item.name}</span>
+            </div>
+          `).join('')}
+        </div>
+        ` : ''}
+        
+        <!-- Last Message -->
+        <div class="mt-3 pt-3 border-t border-white/5">
+          <p class="text-xs text-gray-500 truncate">${session.summary?.title || ''}</p>
+        </div>
+      </div>
+      `;
     }
 
     function formatTimeSpent(ms) {
@@ -282,227 +280,50 @@
       const minutes = Math.floor(seconds / 60);
       const hours = Math.floor(minutes / 60);
       
-      if (hours > 0) {
-        return `${hours} 小時 ${minutes % 60} 分`;
-      } else if (minutes > 0) {
-        return `${minutes} 分 ${seconds % 60} 秒`;
-      } else {
-        return `${seconds} 秒`;
-      }
+      if (hours > 0) return `${hours}小時${minutes % 60}分`;
+      if (minutes > 0) return `${minutes}分${seconds % 60}秒`;
+      return `${seconds}秒`;
     }
 
-    function updateAgentsList() {
-      const container = document.getElementById('agentsList');
+    function openEditDeptModal(id, name) {
+      document.getElementById('editDeptId').value = id;
+      document.getElementById('editDeptName').value = name;
+      document.getElementById('editDeptModal').classList.remove('hidden');
+      document.getElementById('editDeptModal').classList.add('flex');
+    }
+
+    function closeEditDeptModal() {
+      document.getElementById('editDeptModal').classList.add('hidden');
+      document.getElementById('editDeptModal').classList.remove('flex');
+    }
+
+    async function saveDeptName() {
+      const id = document.getElementById('editDeptId').value;
+      const name = document.getElementById('editDeptName').value;
       
-      if (sessions.length === 0) {
-        container.innerHTML = '<p class="text-gray-500 text-center py-8">目前沒有作用中的 Agents</p>';
-        return;
-      }
-      
-      // Filter to show only recent/active sessions with meaningful content
-      const displaySessions = sessions.slice(0, 10).filter(s => s.messages > 0);
-      
-      if (displaySessions.length === 0) {
-        container.innerHTML = '<p class="text-gray-500 text-center py-8">目前沒有作用中的 Agents</p>';
-        return;
-      }
-      
-      container.innerHTML = displaySessions.map(session => {
-        const active = session.isActive;
-        const taskItems = session.taskItems || [];
-        
-        return `
-        <div class="bg-white/5 rounded-lg overflow-hidden mb-3">
-          <!-- Header -->
-          <div class="flex items-center justify-between p-3 hover:bg-white/10 transition">
-            <div class="flex items-center gap-3">
-              <div class="w-10 h-10 ${active ? 'bg-green-500/20' : 'bg-gray-500/20'} rounded-lg flex items-center justify-center text-lg">
-                ${session.agent === 'coding-agent' ? '💻' : (active ? '⚙️' : '💤')}
-              </div>
-              <div>
-                <p class="font-semibold text-white">${session.agentDisplayName || session.agent}</p>
-                <p class="text-xs text-blue-300">${session.taskName || '未命名任務'}</p>
-              </div>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="px-2 py-1 text-xs rounded-full ${getStatusClass(active ? 'active' : 'idle')}">${getStatusText(active ? 'active' : 'idle')}</span>
-            </div>
-          </div>
-          
-          <!-- Progress & Time -->
-          <div class="px-3 pb-2">
-            <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
-              <span>進度: ${session.progress || 0}%</span>
-              <span>⏱️ ${formatTimeSpent(session.timeSpent)}</span>
-            </div>
-            <div class="w-full bg-white/10 rounded-full h-2">
-              <div class="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all" style="width: ${session.progress || 0}%"></div>
-            </div>
-          </div>
-          
-          <!-- Task Checklist -->
-          ${taskItems.length > 0 ? `
-          <div class="px-3 pb-3">
-            <p class="text-xs text-gray-400 mb-2">工作項目:</p>
-            <div class="space-y-1 max-h-32 overflow-y-auto">
-              ${taskItems.map(item => `
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="${item.status === 'completed' ? 'text-green-400' : 'text-yellow-400'}">
-                    ${item.status === 'completed' ? '✓' : '○'}
-                  </span>
-                  <span class="${item.status === 'completed' ? 'text-gray-400 line-through' : 'text-gray-300'}">${item.name || 'Unknown'}</span>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-          ` : ''}
-          
-          <!-- Last Message Preview -->
-          <div class="px-3 pb-3">
-            <p class="text-xs text-gray-500 truncate">${session.summary?.title || ''}</p>
-          </div>
-        </div>
-      `}).join('');
-    }
-
-    function getStatusClass(status) {
-      const classes = {
-        'active': 'bg-green-500/20 text-green-400',
-        'processing': 'bg-yellow-500/20 text-yellow-400',
-        'completed': 'bg-blue-500/20 text-blue-400',
-        'idle': 'bg-gray-500/20 text-gray-400'
-      };
-      return classes[status] || classes.idle;
-    }
-
-    function getStatusText(status) {
-      const texts = {
-        'active': '作用中',
-        'processing': '處理中',
-        'completed': '已完成',
-        'idle': '閒置'
-      };
-      return texts[status] || status;
-    }
-
-    function updateTaskQueue() {
-      const container = document.getElementById('taskQueue');
-      const activeTasks = tasks.filter(t => t.status === 'running' || t.status === 'processing');
-      
-      if (activeTasks.length === 0) {
-        container.innerHTML = '<p class="text-gray-500 text-center py-8">目前沒有待處理的任務</p>';
-        return;
-      }
-      
-      container.innerHTML = activeTasks.map(task => `
-        <div class="p-3 bg-white/5 rounded-lg">
-          <div class="flex items-center justify-between mb-2">
-            <span class="font-medium text-sm">${task.task || '未命名任務'}</span>
-            <span class="text-xs text-yellow-400">${getStatusText(task.status)}</span>
-          </div>
-          <div class="w-full bg-white/10 rounded-full h-1.5">
-            <div class="bg-yellow-500 h-1.5 rounded-full" style="width: ${task.progress || 50}%"></div>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    function updateReportsList() {
-      const container = document.getElementById('reportsList');
-      
-      if (reports.length === 0) {
-        container.innerHTML = '<p class="text-gray-500 text-center py-8">目前沒有完成報告</p>';
-        return;
-      }
-      
-      container.innerHTML = reports.map(report => `
-        <div class="p-4 bg-white/5 rounded-lg">
-          <div class="flex items-start justify-between mb-3">
-            <div>
-              <h4 class="font-semibold">${report.title || '任務報告'}</h4>
-              <p class="text-xs text-gray-400">${formatDate(report.createdAt)}</p>
-            </div>
-            <span class="px-2 py-1 text-xs rounded-full ${report.status === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
-              ${report.status === 'success' ? '成功' : '失敗'}
-            </span>
-          </div>
-          <div class="text-sm text-gray-300 mb-3">${report.summary || '無摘要資訊'}</div>
-          ${report.details ? `
-            <details class="text-sm">
-              <summary class="cursor-pointer text-blue-400 hover:text-blue-300">查看詳細資訊</summary>
-              <pre class="mt-2 p-3 bg-black/30 rounded-lg overflow-x-auto text-xs">${JSON.stringify(report.details, null, 2)}</pre>
-            </details>
-          ` : ''}
-        </div>
-      `).join('');
-    }
-
-    function formatDate(timestamp) {
-      if (!timestamp) return '未知';
-      return new Date(timestamp).toLocaleString('zh-TW');
-    }
-
-    function formatTimeAgo(timestamp) {
-      if (!timestamp) return '';
-      const seconds = Math.floor((Date.now() - timestamp) / 1000);
-      if (seconds < 60) return '剛剛';
-      if (seconds < 3600) return `${Math.floor(seconds / 60)}分鐘前`;
-      if (seconds < 86400) return `${Math.floor(seconds / 3600)}小時前`;
-      return `${Math.floor(seconds / 86400)}天前`;
-    }
-
-    // Modal functions
-    function openAgentTeamModal() {
-      document.getElementById('agentTeamModal').classList.remove('hidden');
-      document.getElementById('agentTeamModal').classList.add('flex');
-    }
-
-    function closeAgentTeamModal() {
-      document.getElementById('agentTeamModal').classList.add('hidden');
-      document.getElementById('agentTeamModal').classList.remove('flex');
-    }
-
-    async function submitAgentTeam() {
-      const task = document.getElementById('taskDescription').value;
-      const agents = Array.from(document.querySelectorAll('#agentSelection input:checked')).map(cb => cb.value);
-      
-      if (!task.trim()) {
-        alert('請輸入任務描述');
+      if (!name.trim()) {
+        alert('請輸入部門名稱');
         return;
       }
 
       try {
-        const res = await fetch(`${API_BASE}/api/agent-team`, {
-          method: 'POST',
+        await fetch(`${API_BASE}/api/departments/${id}`, {
+          method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task, agents, workflow: ['analyze', 'implement', 'test', 'report'] })
+          body: JSON.stringify({ name })
         });
         
-        const result = await res.json();
-        console.log('Agent 團隊已建立:', result);
-        
-        closeAgentTeamModal();
-        refreshTasks();
+        closeEditDeptModal();
+        refreshData();
       } catch (e) {
-        alert('建立 Agent 團隊時發生錯誤: ' + e.message);
+        alert('儲存失敗: ' + e.message);
       }
-    }
-
-    function viewSession(id) {
-      window.open(`${API_BASE}/api/sessions/${id}`, '_blank');
     }
 
     // Initialize
     connectWebSocket();
     refreshData();
-    refreshTasks();
-    refreshReports();
-
-    // Auto-refresh every 10 seconds
-    setInterval(() => {
-      refreshData();
-      refreshTasks();
-    }, 10000);
+    setInterval(refreshData, 15000);
   </script>
 </body>
 </html>

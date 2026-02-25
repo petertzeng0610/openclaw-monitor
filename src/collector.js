@@ -12,7 +12,29 @@ const OPENCLAW_DIR = process.env.OPENCLAW_PATH || '/home/openclaw/.openclaw';
 const AGENTS_DIR = path.join(OPENCLAW_DIR, 'agents');
 const LOGS_DIR = path.join(OPENCLAW_DIR, 'logs');
 
-console.log('[Collector] Using OpenClaw path:', OPENCLAW_DIR);
+// Claude Code paths
+const CLAUDE_CODE_DIR = process.env.CLAUDE_CODE_PATH || 
+  (process.env.HOME ? path.join(process.env.HOME, '.claude') : '/home/openclaw/.claude');
+
+console.log('[Collector] Using paths:', { OPENCLAW_DIR, CLAUDE_CODE_DIR });
+
+// Data source configurations
+const DATA_SOURCES = {
+  openclaw: {
+    name: 'OpenClaw',
+    basePath: AGENTS_DIR,
+    agentDirs: ['main', 'coding-agent'],
+    sessionsPattern: '**/sessions/*.jsonl',
+    type: 'openclaw'
+  },
+  claude: {
+    name: 'Claude Code',
+    basePath: CLAUDE_CODE_DIR,
+    agentDirs: ['projects'],
+    sessionsPattern: '**/*.jsonl',
+    type: 'claude'
+  }
+};
 
 export class AgentCollector extends EventEmitter {
   constructor(datastore) {
@@ -21,73 +43,135 @@ export class AgentCollector extends EventEmitter {
     this.watchers = [];
     this.sessionCache = new Map();
     this.lastProcessed = new Map();
+    this.departments = new Map();
   }
 
   async start() {
-    console.log('[Collector] Starting agent data collection...');
+    console.log('[Collector] Starting multi-department agent data collection...');
     
-    await this.watchAllAgentSessions();
+    await this.detectDepartments();
+    await this.watchAllDepartments();
     await this.watchLogs();
-    await this.collectAllAgentData();
+    await this.collectAllData();
     
     console.log('[Collector] Data collection started');
+    console.log('[Collector] Departments:', Array.from(this.departments.keys()));
   }
 
-  async collectAllAgentData() {
+  async detectDepartments() {
+    this.departments.clear();
+    
+    // Detect OpenClaw
     try {
-      const agentDirs = await fs.readdir(AGENTS_DIR, { withFileTypes: true });
+      const openclawAgents = await fs.readdir(AGENTS_DIR).catch(() => []);
+      if (openclawAgents.length > 0) {
+        this.departments.set('openclaw', {
+          id: 'openclaw',
+          name: 'OpenClaw 開發團隊',
+          type: 'openclaw',
+          path: AGENTS_DIR,
+          agentCount: openclawAgents.length
+        });
+      }
+    } catch {}
+
+    // Detect Claude Code - use the parent .claude directory
+    const claudePaths = [
+      path.join(process.env.HOME || '/Users/peter', '.claude'),
+      '/home/openclaw/.claude',
+      path.join(process.env.HOME || '/Users/peter', 'Library/Application Support/Claude')
+    ];
+
+    for (const claudePath of claudePaths) {
+      try {
+        const exists = await fs.access(claudePath).then(() => true).catch(() => false);
+        if (exists) {
+          this.departments.set('claude', {
+            id: 'claude',
+            name: 'Claude Code 團隊',
+            type: 'claude',
+            path: claudePath,
+            agentCount: 1
+          });
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  async collectAllData() {
+    for (const [id, dept] of this.departments) {
+      try {
+        if (dept.type === 'openclaw') {
+          await this.collectOpenClawData(dept);
+        } else if (dept.type === 'claude') {
+          await this.collectClaudeData(dept);
+        }
+      } catch (error) {
+        console.error(`[Collector] Error collecting from ${id}:`, error.message);
+      }
+    }
+  }
+
+  async collectOpenClawData(dept) {
+    try {
+      const agentDirs = await fs.readdir(dept.path, { withFileTypes: true });
       
       for (const agentDir of agentDirs) {
         if (agentDir.isDirectory()) {
-          const sessionsPath = path.join(AGENTS_DIR, agentDir.name, 'sessions');
+          const sessionsPath = path.join(dept.path, agentDir.name, 'sessions');
           try {
             const files = await fs.readdir(sessionsPath);
             for (const file of files) {
               if (file.endsWith('.jsonl')) {
-                await this.processSessionFile(file, agentDir.name);
+                await this.processOpenClawSession(file, agentDir.name, dept);
               }
             }
           } catch (e) {}
         }
       }
     } catch (error) {
-      console.error('[Collector] Error collecting initial data:', error.message);
+      console.error('[Collector] OpenClaw collection error:', error.message);
     }
   }
 
-  async watchAllAgentSessions() {
-    const watcher = watch(AGENTS_DIR, {
-      depth: 2,
-      ignored: /^\./,
-      persistent: true
-    });
-
-    watcher.on('add', async (filePath) => {
-      if (filePath.endsWith('.jsonl')) {
-        const parts = filePath.split('/');
-        const agentIdx = parts.indexOf('agents');
-        const agentName = parts[agentIdx + 1];
-        const fileName = path.basename(filePath);
-        await this.processSessionFile(fileName, agentName);
+  async collectClaudeData(dept) {
+    // Claude Code stores sessions in projects folder
+    const projectsPath = path.join(dept.path, 'projects');
+    
+    try {
+      const projectDirs = await fs.readdir(projectsPath, { withFileTypes: true });
+      
+      for (const projectDir of projectDirs) {
+        if (projectDir.isDirectory()) {
+          const projectSessionsPath = path.join(projectsPath, projectDir.name);
+          try {
+            const files = await fs.readdir(projectSessionsPath);
+            for (const file of files) {
+              if (file.endsWith('.jsonl') && !file.startsWith('agent-')) {
+                await this.processClaudeSession(file, projectDir.name, dept);
+              }
+            }
+          } catch (e) {}
+        }
       }
-    });
-
-    watcher.on('change', async (filePath) => {
-      if (filePath.endsWith('.jsonl')) {
-        const parts = filePath.split('/');
-        const agentIdx = parts.indexOf('agents');
-        const agentName = parts[agentIdx + 1];
-        const fileName = path.basename(filePath);
-        await this.processSessionFile(fileName, agentName);
-      }
-    });
-
-    this.watchers.push(watcher);
+    } catch (error) {
+      // Try alternative path for Claude Code
+      const altPath = path.join(process.env.HOME || '/Users/peter', '.claude/projects/-Users-peter');
+      try {
+        const files = await fs.readdir(altPath);
+        for (const file of files) {
+          if (file.endsWith('.jsonl')) {
+            await this.processClaudeSession(file, 'default', dept);
+          }
+        }
+      } catch {}
+    }
   }
 
-  async processSessionFile(fileName, agentName = 'main') {
+  async processOpenClawSession(fileName, agentName, dept) {
     const sessionId = fileName.replace('.jsonl', '');
-    const filePath = path.join(AGENTS_DIR, agentName, 'sessions', fileName);
+    const filePath = path.join(dept.path, agentName, 'sessions', fileName);
     
     try {
       const content = await fs.readFile(filePath, 'utf-8');
@@ -100,7 +184,7 @@ export class AgentCollector extends EventEmitter {
       let firstUserMessage = '';
       let currentTask = '';
       const tools = new Set();
-      let modelId = 'google/gemini-2.5-flash';
+      let modelId = 'unknown';
       const taskItems = [];
       
       for (const line of lines) {
@@ -113,7 +197,6 @@ export class AgentCollector extends EventEmitter {
             const msg = entry.message;
             const role = msg?.role;
             
-            // Extract text content from message
             let textContent = '';
             if (msg?.content) {
               if (typeof msg.content === 'string') {
@@ -128,54 +211,19 @@ export class AgentCollector extends EventEmitter {
               }
             }
             
-            // Capture first user message as task name
             if (role === 'user' && !firstUserMessage && textContent) {
               firstUserMessage = textContent;
               currentTask = this.extractTaskName(textContent);
             }
             
-            // Get the last message for summary
             if (textContent) {
               lastMessage = textContent;
             }
             
-            // Get tool calls and track tasks
             if (msg?.tool_calls) {
               for (const tc of msg.tool_calls) {
                 const toolName = tc.function?.name || tc.name || 'unknown';
                 tools.add(toolName);
-                
-                // Track task items from tool usage
-                if (toolName === 'write' || toolName === 'edit') {
-                  const args = tc.function?.arguments;
-                  if (args && typeof args === 'string') {
-                    try {
-                      const parsed = JSON.parse(args);
-                      const filePath = parsed.file_path || parsed.path || '';
-                      if (filePath) {
-                        const fileName = filePath.split('/').pop();
-                        if (fileName && !taskItems.find(t => t.name === fileName)) {
-                          taskItems.push({
-                            name: fileName,
-                            status: 'pending',
-                            tool: toolName
-                          });
-                        }
-                      }
-                    } catch {}
-                  }
-                }
-              }
-            }
-            
-            // Track task completion from tool results
-            if (role === 'tool') {
-              const toolName = msg.name || 'unknown';
-              for (const item of taskItems) {
-                if (msg.content?.includes(item.name)) {
-                  item.status = 'completed';
-                  item.result = msg.content?.slice(0, 100);
-                }
               }
             }
           } else if (type === 'model_change') {
@@ -187,25 +235,21 @@ export class AgentCollector extends EventEmitter {
       const stats = await fs.stat(filePath);
       const now = Date.now();
       const fileAge = now - stats.mtime.getTime();
-      const isActive = fileAge < 300000; // 5 minutes - more lenient for AI tasks
+      const isActive = fileAge < 300000;
       
-      // Calculate progress based on task items
       const completedItems = taskItems.filter(t => t.status === 'completed').length;
       let progress = 0;
       if (taskItems.length > 0) {
         progress = Math.round((completedItems / taskItems.length) * 100);
       } else if (messageCount > 0 && !isActive) {
-        // Only show 100% if session is actually completed (not active)
-        progress = Math.min(messageCount * 8, 95); // Cap at 95% for active tasks
+        progress = Math.min(messageCount * 8, 95);
       } else if (isActive) {
-        // Active session - show in-progress based on message count
-        progress = Math.min(messageCount * 5, 90); // Cap at 90% for active
+        progress = Math.min(messageCount * 5, 90);
       }
       
-      // Calculate time spent
       const timeSpent = stats.mtime.getTime() - stats.birthtime.getTime();
       
-      // Generate agent name based on agent type and session
+      // Generate agent name
       const agentDisplayNames = {
         'main': ['🧑‍💼 主 Agent', '👨‍💻 主程式設計師', '📋 專案管理員', '🎯 任務調度員'],
         'coding-agent': ['💻 程式碼 Agent', '🔧 開發 Agent', '⚙️ 技術 Agent', '🛠️ 實作 Agent']
@@ -216,6 +260,8 @@ export class AgentCollector extends EventEmitter {
       
       const sessionData = {
         id: sessionId,
+        department: dept.id,
+        departmentName: dept.name,
         agent: agentName,
         agentDisplayName: displayAgentName,
         taskName: currentTask || '未命名任務',
@@ -227,13 +273,14 @@ export class AgentCollector extends EventEmitter {
         timeSpent: timeSpent,
         tools: Array.from(tools),
         model: modelId,
-        taskItems: taskItems.slice(0, 10), // Limit to 10 items
+        taskItems: taskItems.slice(0, 10),
         summary: {
           title: lastMessage.slice(0, 150) || (isActive ? '執行中...' : '已完成')
         }
       };
 
-      this.sessionCache.set(sessionId, sessionData);
+      const cacheKey = `${dept.id}-${sessionId}`;
+      this.sessionCache.set(cacheKey, sessionData);
       this.datastore.saveSession(sessionData);
       
       this.emit('agentUpdate', sessionData);
@@ -241,36 +288,232 @@ export class AgentCollector extends EventEmitter {
       // File might be locked or empty
     }
   }
-  
+
+  async processClaudeSession(fileName, projectName, dept) {
+    const sessionId = fileName.replace('.jsonl', '');
+    const filePath = path.join(dept.path, 'projects', projectName, fileName);
+    
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+      
+      if (lines.length === 0) return;
+      
+      let messageCount = 0;
+      let lastMessage = '';
+      let firstUserMessage = '';
+      let currentTask = '';
+      const tools = new Set();
+      let modelId = 'Claude';
+      
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line);
+          const type = entry.type;
+          
+          if (type === 'user' && entry.message?.content) {
+            messageCount++;
+            let textContent = '';
+            if (typeof entry.message.content === 'string') {
+              textContent = entry.message.content;
+            } else if (Array.isArray(entry.message.content)) {
+              for (const c of entry.message.content) {
+                if (c?.type === 'text') {
+                  textContent = c.text || '';
+                  break;
+                }
+              }
+            }
+            
+            if (!firstUserMessage && textContent) {
+              firstUserMessage = textContent;
+              currentTask = this.extractTaskName(textContent);
+            }
+            
+            if (textContent) {
+              lastMessage = textContent;
+            }
+          } else if (type === 'assistant' && entry.message?.content) {
+            messageCount++;
+            let textContent = '';
+            if (Array.isArray(entry.message.content)) {
+              for (const c of entry.message.content) {
+                if (c?.type === 'text') {
+                  textContent = c.text || '';
+                  break;
+                }
+              }
+            }
+            if (textContent) {
+              lastMessage = textContent;
+            }
+          }
+        } catch {}
+      }
+      
+      const stats = await fs.stat(filePath);
+      const now = Date.now();
+      const fileAge = now - stats.mtime.getTime();
+      const isActive = fileAge < 300000;
+      
+      let progress = 0;
+      if (messageCount > 0 && !isActive) {
+        progress = Math.min(messageCount * 8, 95);
+      } else if (isActive) {
+        progress = Math.min(messageCount * 5, 90);
+      }
+      
+      const timeSpent = stats.mtime.getTime() - stats.birthtime.getTime();
+      
+      // Claude Code agent names
+      const agentNames = ['🦁 Claude', '🤖 AI 助手', '💡 智慧顧問', '🧠 深度思考'];
+      const agentIndex = Math.abs(this.hashCode(sessionId)) % agentNames.length;
+      const displayAgentName = agentNames[agentIndex];
+      
+      const sessionData = {
+        id: sessionId,
+        department: dept.id,
+        departmentName: dept.name,
+        agent: 'claude-assistant',
+        agentDisplayName: displayAgentName,
+        taskName: currentTask || `專案: ${projectName}`,
+        status: isActive ? 'active' : 'idle',
+        createdAt: stats.birthtime.getTime(),
+        updatedAt: stats.mtime.getTime(),
+        messages: messageCount,
+        progress: progress,
+        timeSpent: timeSpent,
+        tools: Array.from(tools),
+        model: modelId,
+        taskItems: [],
+        summary: {
+          title: lastMessage.slice(0, 150) || (isActive ? '執行中...' : '已完成')
+        }
+      };
+
+      const cacheKey = `${dept.id}-${sessionId}`;
+      this.sessionCache.set(cacheKey, sessionData);
+      this.datastore.saveSession(sessionData);
+      
+      this.emit('agentUpdate', sessionData);
+    } catch (error) {
+      // File might be locked or empty
+    }
+  }
+
+  async watchAllDepartments() {
+    // Watch OpenClaw
+    try {
+      const openclawWatcher = watch(AGENTS_DIR, {
+        depth: 3,
+        ignored: /^\./,
+        persistent: true
+      });
+
+      openclawWatcher.on('add', async (filePath) => {
+        if (filePath.endsWith('.jsonl')) {
+          const parts = filePath.split('/');
+          const agentIdx = parts.indexOf('agents');
+          if (agentIdx !== -1) {
+            const agentName = parts[agentIdx + 1];
+            const dept = this.departments.get('openclaw');
+            if (dept) {
+              const fileName = path.basename(filePath);
+              await this.processOpenClawSession(fileName, agentName, dept);
+            }
+          }
+        }
+      });
+
+      openclawWatcher.on('change', async (filePath) => {
+        if (filePath.endsWith('.jsonl')) {
+          const parts = filePath.split('/');
+          const agentIdx = parts.indexOf('agents');
+          if (agentIdx !== -1) {
+            const agentName = parts[agentIdx + 1];
+            const dept = this.departments.get('openclaw');
+            if (dept) {
+              const fileName = path.basename(filePath);
+              await this.processOpenClawSession(fileName, agentName, dept);
+            }
+          }
+        }
+      });
+
+      this.watchers.push(openclawWatcher);
+    } catch {}
+
+    // Watch Claude Code
+    const claudeWatchPaths = [
+      path.join(process.env.HOME || '/Users/peter', '.claude/projects')
+    ];
+
+    for (const watchPath of claudeWatchPaths) {
+      try {
+        const watcher = watch(watchPath, {
+          depth: 2,
+          ignored: /^\./,
+          persistent: true
+        });
+
+        watcher.on('add', async (filePath) => {
+          if (filePath.endsWith('.jsonl')) {
+            const dept = this.departments.get('claude');
+            if (dept) {
+              const fileName = path.basename(filePath);
+              await this.processClaudeSession(fileName, 'project', dept);
+            }
+          }
+        });
+
+        watcher.on('change', async (filePath) => {
+          if (filePath.endsWith('.jsonl')) {
+            const dept = this.departments.get('claude');
+            if (dept) {
+              const fileName = path.basename(filePath);
+              await this.processClaudeSession(fileName, 'project', dept);
+            }
+          }
+        });
+
+        this.watchers.push(watcher);
+      } catch {}
+    }
+  }
+
+  async watchLogs() {
+    try {
+      const watcher = watch(path.join(LOGS_DIR, '*.log'), {
+        persistent: true
+      });
+
+      watcher.on('change', async (filePath) => {
+        // Log changes are handled by periodic refresh
+      });
+
+      this.watchers.push(watcher);
+    } catch {}
+  }
+
   extractTaskName(content) {
     if (!content) return '';
     
-    // Clean up the content
     let cleaned = content;
     
-    // Remove timestamp prefix like [Wed 2026-02-25 11:52 GMT+8]
+    // Remove timestamp prefix
     cleaned = cleaned.replace(/\[.*?\]\s*/g, '');
-    
-    // Remove System: prefix
     cleaned = cleaned.replace(/System:.*?$/gm, '');
-    
-    // Remove message_id
     cleaned = cleaned.replace(/\[message_id:.*?\]/g, '');
-    
-    // Remove task description prefix
     cleaned = cleaned.replace(/^任務描述：\s*/g, '');
     cleaned = cleaned.replace(/^請/g, '');
     
-    // Clean up remaining content
     cleaned = cleaned
       .replace(/[#*`\n]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     
-    // Take first 35 characters or first sentence
     if (cleaned.length <= 35) return cleaned;
     
-    // Try to get a meaningful first sentence
     const firstSentence = cleaned.split(/[.!?。！？\n]/)[0];
     if (firstSentence && firstSentence.length > 5) {
       return firstSentence.slice(0, 35);
@@ -278,7 +521,7 @@ export class AgentCollector extends EventEmitter {
     
     return cleaned.slice(0, 35) + '...';
   }
-  
+
   hashCode(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
@@ -289,148 +532,16 @@ export class AgentCollector extends EventEmitter {
     return hash;
   }
 
-  async watchLogs() {
-    const watcher = watch(path.join(LOGS_DIR, '*.log'), {
-      persistent: true
-    });
-
-    let lastSize = 0;
-    
-    watcher.on('change', async (filePath) => {
-      try {
-        const stats = await fs.stat(filePath);
-        if (stats.size > lastSize) {
-          const content = await fs.readFile(filePath, 'utf-8');
-          const newContent = content.slice(lastSize);
-          await this.parseLogEntries(newContent);
-          lastSize = stats.size;
-        }
-      } catch (error) {
-        // File might be locked
-      }
-    });
-
-    this.watchers.push(watcher);
+  getDepartments() {
+    return Array.from(this.departments.values());
   }
 
-  async parseLogEntries(content) {
-    const lines = content.split('\n').filter(line => line.trim());
-    
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line);
-        
-        if (entry.message?.includes('agent') || entry.message?.includes('task')) {
-          this.emit('agentUpdate', {
-            timestamp: entry.timestamp || Date.now(),
-            message: entry.message,
-            level: entry.level
-          });
-        }
-      } catch {
-        // Not JSON, might be plain text log
-      }
+  updateDepartmentName(id, name) {
+    if (this.departments.has(id)) {
+      const dept = this.departments.get(id);
+      dept.name = name;
+      this.departments.set(id, dept);
     }
-  }
-
-  async processSession(sessionName) {
-    try {
-      const sessionPath = path.join(SESSIONS_DIR, sessionName);
-      const files = await fs.readdir(sessionPath);
-      
-      const agentFile = files.find(f => f.endsWith('.json') && !f.startsWith('.'));
-      if (!agentFile) return;
-
-      const agentPath = path.join(sessionPath, agentFile);
-      const content = await fs.readFile(agentPath, 'utf-8');
-      const data = JSON.parse(content);
-
-      const sessionData = {
-        id: sessionName,
-        name: this.extractSessionName(data),
-        status: this.detectStatus(data, sessionName),
-        createdAt: this.extractCreatedTime(data),
-        updatedAt: await this.getFileMtime(agentPath),
-        messages: data.messages?.length || 0,
-        tools: this.extractTools(data),
-        model: this.extractModel(data),
-        summary: this.extractSummary(data)
-      };
-
-      this.sessionCache.set(sessionName, sessionData);
-      this.datastore.saveSession(sessionData);
-      
-      this.emit('agentUpdate', sessionData);
-    } catch (error) {
-      // Session might be in progress
-    }
-  }
-
-  extractSessionName(data) {
-    if (data.name) return data.name;
-    if (data.summary?.title) return data.summary.title;
-    return 'Unnamed Session';
-  }
-
-  detectStatus(data, sessionName) {
-    if (sessionName.includes('active')) return 'active';
-    if (data.messages?.length > 0) {
-      const lastMsg = data.messages[data.messages.length - 1];
-      if (lastMsg?.role === 'assistant' && !lastMsg?.content) return 'processing';
-      return 'completed';
-    }
-    return 'idle';
-  }
-
-  extractCreatedTime(data) {
-    if (data.createdAt) return new Date(data.createdAt).getTime();
-    if (data.meta?.createdAt) return new Date(data.meta.createdAt).getTime();
-    return Date.now();
-  }
-
-  async getFileMtime(filePath) {
-    try {
-      const stats = await fs.stat(filePath);
-      return stats.mtime.getTime();
-    } catch {
-      return Date.now();
-    }
-  }
-
-  extractTools(data) {
-    const tools = new Set();
-    
-    if (data.messages) {
-      for (const msg of data.messages) {
-        if (msg.tool_calls) {
-          for (const call of msg.tool_calls) {
-            tools.add(call.function?.name || call.name);
-          }
-        }
-      }
-    }
-    
-    return Array.from(tools);
-  }
-
-  extractModel(data) {
-    if (data.model) return data.model;
-    if (data.metadata?.model) return data.metadata.model;
-    return 'unknown';
-  }
-
-  extractSummary(data) {
-    if (data.summary) return data.summary;
-    if (data.messages?.length > 0) {
-      const lastUserMsg = [...data.messages].reverse().find(m => m.role === 'user');
-      if (lastUserMsg) {
-        return {
-          title: lastUserMsg.content?.slice(0, 100),
-          lastMessage: lastUserMsg.content?.slice(0, 200)
-        };
-      }
-    }
-    return {};
   }
 
   stop() {
