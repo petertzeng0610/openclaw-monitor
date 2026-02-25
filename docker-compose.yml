@@ -1,0 +1,33 @@
+# OpenClaw Monitor Docker Compose
+# =================================
+# Usage:
+#   docker-compose up -d          # Start the monitor
+#   docker-compose logs -f        # View logs
+#   docker-compose down           # Stop the monitor
+
+services:
+  openclaw-monitor:
+    build: .
+    container_name: openclaw-monitor
+    ports:
+      - "3847:3847"
+    volumes:
+      # Mount OpenClaw data directory
+      # On macOS: ~/.openclaw is usually /Users/username/.openclaw
+      # On Linux: ~/.openclaw is usually /home/username/.openclaw
+      - ~/.openclaw:/home/openclaw/.openclaw:ro
+    environment:
+      - NODE_ENV=production
+      - PORT=3847
+      - OPENCLAW_PATH=/home/openclaw/.openclaw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3847/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: openclaw-network
