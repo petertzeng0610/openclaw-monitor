@@ -97,8 +97,11 @@ export class AgentCollector extends EventEmitter {
       
       let messageCount = 0;
       let lastMessage = '';
+      let firstUserMessage = '';
+      let currentTask = '';
       const tools = new Set();
       let modelId = 'google/gemini-2.5-flash';
+      const taskItems = [];
       
       for (const line of lines) {
         try {
@@ -107,18 +110,72 @@ export class AgentCollector extends EventEmitter {
           
           if (type === 'message') {
             messageCount++;
-            // Get the content from the message
-            if (entry.message?.content) {
-              if (typeof entry.message.content === 'string') {
-                lastMessage = entry.message.content;
-              } else if (entry.message.content[0]?.text) {
-                lastMessage = entry.message.content[0].text;
+            const msg = entry.message;
+            const role = msg?.role;
+            
+            // Extract text content from message
+            let textContent = '';
+            if (msg?.content) {
+              if (typeof msg.content === 'string') {
+                textContent = msg.content;
+              } else if (Array.isArray(msg.content)) {
+                for (const c of msg.content) {
+                  if (c?.type === 'text') {
+                    textContent = c.text || '';
+                    break;
+                  }
+                }
               }
             }
-            // Get tool calls
-            if (entry.message?.tool_calls) {
-              for (const tc of entry.message.tool_calls) {
-                tools.add(tc.function?.name || tc.name || 'unknown');
+            
+            // Capture first user message as task name
+            if (role === 'user' && !firstUserMessage && textContent) {
+              firstUserMessage = textContent;
+              currentTask = this.extractTaskName(textContent);
+            }
+            
+            // Get the last message for summary
+            if (textContent) {
+              lastMessage = textContent;
+            }
+            
+            // Get tool calls and track tasks
+            if (msg?.tool_calls) {
+              for (const tc of msg.tool_calls) {
+                const toolName = tc.function?.name || tc.name || 'unknown';
+                tools.add(toolName);
+                
+                // Track task items from tool usage
+                if (toolName === 'write' || toolName === 'edit') {
+                  const args = tc.function?.arguments;
+                  if (args && typeof args === 'string') {
+                    try {
+                      const parsed = JSON.parse(args);
+                      const filePath = parsed.file_path || parsed.path || '';
+                      if (filePath) {
+                        const fileName = filePath.split('/').pop();
+                        if (fileName && !taskItems.find(t => t.name === fileName)) {
+                          taskItems.push({
+                            name: fileName,
+                            status: 'pending',
+                            tool: toolName
+                          });
+                        }
+                      }
+                    } catch {}
+                  }
+                }
+              }
+            }
+            
+            // Track task completion from tool results
+            if (role === 'tool') {
+              const toolName = msg.name || 'unknown';
+              for (const item of taskItems) {
+                if (msg.content?.includes(item.name)) {
+                  item.status = 'completed';
+                  item.result = msg.content?.slice(0, 100);
+                }
               }
             }
           } else if (type === 'model_change') {
@@ -130,20 +187,38 @@ export class AgentCollector extends EventEmitter {
       const stats = await fs.stat(filePath);
       const now = Date.now();
       const fileAge = now - stats.mtime.getTime();
-      const isActive = fileAge < 300000; // 5 minutes
+      const isActive = fileAge < 120000; // 2 minutes
+      
+      // Calculate progress based on task items
+      const completedItems = taskItems.filter(t => t.status === 'completed').length;
+      const progress = taskItems.length > 0 
+        ? Math.round((completedItems / taskItems.length) * 100)
+        : Math.min(messageCount * 5, 100); // Estimate based on messages
+      
+      // Calculate time spent
+      const timeSpent = stats.mtime.getTime() - stats.birthtime.getTime();
+      
+      // Generate agent name
+      const agentNames = ['Agent 一號', 'Agent 二號', 'Agent 三號', 'Agent 四號', 'Agent 五號'];
+      const agentIndex = Math.abs(this.hashCode(sessionId)) % agentNames.length;
+      const displayAgentName = agentNames[agentIndex];
       
       const sessionData = {
         id: sessionId,
         agent: agentName,
-        name: `${agentName} - ${sessionId.slice(0, 8)}`,
+        agentDisplayName: displayAgentName,
+        taskName: currentTask || '未命名任務',
         status: isActive ? 'active' : 'idle',
         createdAt: stats.birthtime.getTime(),
         updatedAt: stats.mtime.getTime(),
         messages: messageCount,
+        progress: progress,
+        timeSpent: timeSpent,
         tools: Array.from(tools),
         model: modelId,
+        taskItems: taskItems.slice(0, 10), // Limit to 10 items
         summary: {
-          title: lastMessage.slice(0, 100) || (isActive ? '執行中...' : '已完成')
+          title: lastMessage.slice(0, 150) || (isActive ? '執行中...' : '已完成')
         }
       };
 
@@ -154,6 +229,53 @@ export class AgentCollector extends EventEmitter {
     } catch (error) {
       // File might be locked or empty
     }
+  }
+  
+  extractTaskName(content) {
+    if (!content) return '';
+    
+    // Clean up the content
+    let cleaned = content;
+    
+    // Remove timestamp prefix like [Wed 2026-02-25 11:52 GMT+8]
+    cleaned = cleaned.replace(/\[.*?\]\s*/g, '');
+    
+    // Remove System: prefix
+    cleaned = cleaned.replace(/System:.*?$/gm, '');
+    
+    // Remove message_id
+    cleaned = cleaned.replace(/\[message_id:.*?\]/g, '');
+    
+    // Remove task description prefix
+    cleaned = cleaned.replace(/^任務描述：\s*/g, '');
+    cleaned = cleaned.replace(/^請/g, '');
+    
+    // Clean up remaining content
+    cleaned = cleaned
+      .replace(/[#*`\n]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    // Take first 35 characters or first sentence
+    if (cleaned.length <= 35) return cleaned;
+    
+    // Try to get a meaningful first sentence
+    const firstSentence = cleaned.split(/[.!?。！？\n]/)[0];
+    if (firstSentence && firstSentence.length > 5) {
+      return firstSentence.slice(0, 35);
+    }
+    
+    return cleaned.slice(0, 35) + '...';
+  }
+  
+  hashCode(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return hash;
   }
 
   async watchLogs() {

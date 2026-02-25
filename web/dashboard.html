@@ -276,6 +276,21 @@
       document.getElementById('statReports').textContent = stats.totalReports || 0;
     }
 
+    function formatTimeSpent(ms) {
+      if (!ms) return '0 秒';
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      if (hours > 0) {
+        return `${hours} 小時 ${minutes % 60} 分`;
+      } else if (minutes > 0) {
+        return `${minutes} 分 ${seconds % 60} 秒`;
+      } else {
+        return `${seconds} 秒`;
+      }
+    }
+
     function updateAgentsList() {
       const container = document.getElementById('agentsList');
       
@@ -284,22 +299,67 @@
         return;
       }
       
-      container.innerHTML = sessions.slice(0, 10).map(session => {
+      // Filter to show only recent/active sessions with meaningful content
+      const displaySessions = sessions.slice(0, 10).filter(s => s.messages > 0);
+      
+      if (displaySessions.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-center py-8">目前沒有作用中的 Agents</p>';
+        return;
+      }
+      
+      container.innerHTML = displaySessions.map(session => {
         const active = session.isActive;
+        const taskItems = session.taskItems || [];
+        
         return `
-        <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 ${active ? 'bg-green-500/20' : 'bg-gray-500/20'} rounded-lg flex items-center justify-center">
-              ${session.agent === 'coding-agent' ? '💻' : (active ? '⚡' : '💤')}
+        <div class="bg-white/5 rounded-lg overflow-hidden mb-3">
+          <!-- Header -->
+          <div class="flex items-center justify-between p-3 hover:bg-white/10 transition">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 ${active ? 'bg-green-500/20' : 'bg-gray-500/20'} rounded-lg flex items-center justify-center text-lg">
+                ${session.agent === 'coding-agent' ? '💻' : (active ? '⚙️' : '💤')}
+              </div>
+              <div>
+                <p class="font-semibold text-white">${session.agentDisplayName || session.agent}</p>
+                <p class="text-xs text-blue-300">${session.taskName || '未命名任務'}</p>
+              </div>
             </div>
-            <div>
-              <p class="font-medium">${session.agent === 'coding-agent' ? '🔧 ' : ''}${session.name || '未命名'}</p>
-              <p class="text-xs text-gray-400">${session.agent || session.model || 'unknown'} • ${session.messages || 0} 則訊息 • ${formatTimeAgo(session.updatedAt)}</p>
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-1 text-xs rounded-full ${getStatusClass(active ? 'active' : 'idle')}">${getStatusText(active ? 'active' : 'idle')}</span>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="px-2 py-1 text-xs rounded-full ${getStatusClass(active ? 'active' : 'idle')}">${getStatusText(active ? 'active' : 'idle')}</span>
-            <button onclick="viewSession('${session.id}')" class="text-blue-400 hover:text-blue-300 text-sm">查看</button>
+          
+          <!-- Progress & Time -->
+          <div class="px-3 pb-2">
+            <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+              <span>進度: ${session.progress || 0}%</span>
+              <span>⏱️ ${formatTimeSpent(session.timeSpent)}</span>
+            </div>
+            <div class="w-full bg-white/10 rounded-full h-2">
+              <div class="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all" style="width: ${session.progress || 0}%"></div>
+            </div>
+          </div>
+          
+          <!-- Task Checklist -->
+          ${taskItems.length > 0 ? `
+          <div class="px-3 pb-3">
+            <p class="text-xs text-gray-400 mb-2">工作項目:</p>
+            <div class="space-y-1 max-h-32 overflow-y-auto">
+              ${taskItems.map(item => `
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="${item.status === 'completed' ? 'text-green-400' : 'text-yellow-400'}">
+                    ${item.status === 'completed' ? '✓' : '○'}
+                  </span>
+                  <span class="${item.status === 'completed' ? 'text-gray-400 line-through' : 'text-gray-300'}">${item.name || 'Unknown'}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : ''}
+          
+          <!-- Last Message Preview -->
+          <div class="px-3 pb-3">
+            <p class="text-xs text-gray-500 truncate">${session.summary?.title || ''}</p>
           </div>
         </div>
       `}).join('');
