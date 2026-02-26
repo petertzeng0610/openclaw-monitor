@@ -1,138 +1,94 @@
-# OpenClaw Monitor Dashboard - Docker Deployment
+# Nova AI Monitor - AI 員工管理平台
 
-一個可以部署在任何 Linux 或 macOS 環境的 OpenClaw Agent 監控面板。
+一個功能強大的 AI 員工監控與管理平台，支持 OpenClaw、Claude Code 和 Claude Code Coworker。
 
 ## 功能特色
 
-- 🌐 **Web 儀表板** - 即時監控所有 Agent 狀態
-- 📊 **任務追蹤** - 顯示執行中的任務與進度
-- 📋 **完成報告** - 檢視每個任務的詳細成果報告
-- 🔔 **推播通知** - 任務完成時發送桌面/手機通知
-- 🔄 **即時更新** - 每 15 秒自動刷新數據
+- 🌐 **多平台支援** - 監控 OpenClaw、Claude Code、Coworker
+- 📊 **部門化監控** - 按部門分組顯示 AI 員工
+- 🎯 **即時狀態** - Live Pulse Bar 顯示運行狀態
+- 📋 **任務中心** - 工作流水線監控與異常處理
+- 🔔 **異常通知** - 統一通知中心與歷史記錄
+- ⚙️ **參數配置** - 自定義成本與價值計算
+- 👤 **員工檔案** - 技能矩陣 Radar Chart
+- 🎨 **Nova Style** - 深色毛玻璃 UI
 
 ## 系統需求
 
 - Docker 20.10+
-- Docker Compose (可選)
-- OpenClaw 已安裝並正常運作
+- macOS 或 Windows 10+
+- 建議 4GB+ RAM
 
-## 快速開始
+## 安裝方式
 
-### 方法一：使用 Docker Compose（推薦）
+### 🖥️ 本機安裝（推薦）
 
+#### macOS
 ```bash
-# 1. 進入專案目錄
-cd /Users/peter/openclaw_dashboard
+# 下載專案
+git clone https://github.com/petertzeng0610/openclaw-monitor.git
+cd openclaw-monitor
 
-# 2. 啟動容器
-docker-compose up -d
-
-# 3. 查看日誌
-docker-compose logs -f
+# 執行安裝
+chmod +x install-local.sh
+./install-local.sh
 ```
 
-### 方法二：使用 Docker Run
+#### Windows
+```
+# 下載專案
+git clone https://github.com/petertzeng0610/openclaw-monitor.git
+cd openclaw-monitor
+
+# 執行安裝 (以系統管理員身份)
+install-local.bat
+```
+
+安裝完成後開啟瀏覽器訪問：http://localhost:3847
+
+### ☁️ Docker Compose（服務器部署）
+
+```bash
+cd /Users/peter/openclaw_dashboard
+docker-compose up -d
+```
+
+### 🐳 Docker Run
 
 ```bash
 docker run -d \
-  --name openclaw-monitor \
+  --name nova-ai-monitor \
   -p 3847:3847 \
   -v ~/.openclaw:/home/openclaw/.openclaw:ro \
-  openclaw/monitor:latest
+  -v ~/.claude:/home/openclaw/.claude:ro \
+  -v "~/Library/Application Support/Claude:/home/openclaw/claude-coworker:ro" \
+  --restart unless-stopped \
+  ghcr.io/petertzeng0610/openclaw-monitor:latest
 ```
 
-## 訪問儀表板
-
-啟動後訪問：http://localhost:3847
-
-## 常見操作
+## 快速操作
 
 | 操作 | 指令 |
 |------|------|
-| 停止監控 | `docker-compose down` 或 `docker stop openclaw-monitor` |
-| 重新啟動 | `docker-compose restart` 或 `docker restart openclaw-monitor` |
-| 查看日誌 | `docker-compose logs -f` 或 `docker logs -f openclaw-monitor` |
-| 重新建構 | `docker-compose build --no-cache` |
+| 查看日誌 | `docker logs nova-ai-monitor` |
+| 停止服務 | `docker stop nova-ai-monitor` |
+| 重新啟動 | `docker restart nova-ai-monitor` |
+| 卸載程式 | `docker rm -f nova-ai-monitor` |
 
-## 自訂配置
+## 頁面導覽
 
-### 變更監控端口
+1. **總覽** - 即時監控儀表板，部門折疊清單
+2. **AI 員工** - 完整 Agent 卡片網格，點擊查看檔案
+3. **任務中心** - 工作流水線，異常處理
+4. **異常通知** - 統一通知中心
+5. **設定** - 成本參數配置
 
-編輯 `docker-compose.yml`：
+## 技術棧
 
-```yaml
-ports:
-  - "8080:3847"  # 改為 8080
-```
+- Frontend: React + Tailwind CSS + Framer Motion + Recharts
+- Backend: Node.js + Express
+- Deployment: Docker
 
-然後重新啟動：
+## License
 
-```bash
-docker-compose down
-docker-compose up -d
-```
-
-### 自訂 OpenClaw 路徑
-
-如果您的 OpenClaw 安裝在非預設位置，請修改 `docker-compose.yml`：
-
-```yaml
-environment:
-  - OPENCLAW_PATH=/自訂/路徑/.openclaw
-volumes:
-  - /自訂/路徑:/home/openclaw/.openclaw:ro
-```
-
-## 故障排除
-
-### 看不到 Agent 數據
-
-1. 確認 OpenClaw 正在運作
-2. 檢查 volume mount 是否正確：
-   ```bash
-   docker exec openclaw-monitor ls -la /home/openclaw/.openclaw/agents/
-   ```
-3. 查看收集器日誌：
-   ```bash
-   docker logs openclaw-monitor
-   ```
-
-### 端口已被佔用
-
-更換端口或停止佔用端口的程式：
-
-```bash
-# 找到佔用端口的程式
-lsof -i :3847
-
-# 更換端口
-docker-compose down
-# 編輯 docker-compose.yml 改端口
-docker-compose up -d
-```
-
-## 建構選項
-
-### 只建構 Docker 映像
-
-```bash
-./build.sh
-```
-
-### 使用安裝腳本（自動安裝 Docker）
-
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-## 技術細節
-
-- **基礎影像**: Node.js 20 Alpine
-- **監控端口**: 3847 (可自訂)
-- **數據刷新**: 每 15 秒自動更新
-- **活躍閾值**: 2 分鐘內有更新視為作用中
-
-## 授權
-
-MIT License
+MIT

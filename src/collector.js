@@ -75,7 +75,33 @@ export class AgentCollector extends EventEmitter {
       }
     } catch {}
 
-    // Detect Claude Code - use the parent .claude directory
+    // Detect Claude Code Coworker (local-agent-mode-sessions) - check first!
+    const coworkerPaths = [
+      path.join(process.env.HOME || '/Users/peter', 'Library/Application Support/Claude/local-agent-mode-sessions'),
+      '/home/openclaw/Library/Application Support/Claude/local-agent-mode-sessions',
+      '/home/openclaw/claude-coworker/local-agent-mode-sessions'
+    ];
+
+    for (const coworkerPath of coworkerPaths) {
+      try {
+        const exists = await fs.access(coworkerPath).then(() => true).catch(() => false);
+        if (exists) {
+          const dirs = await fs.readdir(coworkerPath).catch(() => []);
+          if (dirs.length > 0) {
+            this.departments.set('claude-coworker', {
+              id: 'claude-coworker',
+              name: 'Claude Code Coworker',
+              type: 'claude-coworker',
+              path: coworkerPath,
+              agentCount: dirs.length
+            });
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    // Detect Claude Code (standard)
     const claudePaths = [
       path.join(process.env.HOME || '/Users/peter', '.claude'),
       '/home/openclaw/.claude',
@@ -106,6 +132,8 @@ export class AgentCollector extends EventEmitter {
           await this.collectOpenClawData(dept);
         } else if (dept.type === 'claude') {
           await this.collectClaudeData(dept);
+        } else if (dept.type === 'claude-coworker') {
+          await this.collectCoworkerData(dept);
         }
       } catch (error) {
         console.error(`[Collector] Error collecting from ${id}:`, error.message);
@@ -166,6 +194,100 @@ export class AgentCollector extends EventEmitter {
           }
         }
       } catch {}
+    }
+  }
+
+  async collectCoworkerData(dept) {
+    // Claude Code Coworker stores sessions in local-agent-mode-sessions
+    // Path: {session-id}/{uuid}/local_{agent-id}.json
+    
+    try {
+      const sessionDirs = await fs.readdir(dept.path, { withFileTypes: true });
+      
+      for (const sessionDir of sessionDirs) {
+        if (sessionDir.isDirectory()) {
+          const sessionPath = path.join(dept.path, sessionDir.name);
+          try {
+            const uuidDirs = await fs.readdir(sessionPath, { withFileTypes: true });
+            for (const uuidDir of uuidDirs) {
+              if (uuidDir.isDirectory()) {
+                const uuidPath = path.join(sessionPath, uuidDir.name);
+                try {
+                  const files = await fs.readdir(uuidPath);
+                  for (const file of files) {
+                    if (file.endsWith('.json') && file.startsWith('local_')) {
+                      await this.processCoworkerSession(file, sessionDir.name, uuidDir.name, dept);
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (error) {
+      console.error('[Collector] Coworker collection error:', error.message);
+    }
+  }
+
+  async processCoworkerSession(fileName, sessionId, uuid, dept) {
+    // File format: local_{agent-id}.json
+    const agentId = fileName.replace('local_', '').replace('.json', '');
+    const filePath = path.join(dept.path, sessionId, uuid, fileName);
+    
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const session = JSON.parse(content);
+      
+      const now = Date.now();
+      const createdAt = session.createdAt || session.created || now;
+      const lastActivity = session.lastActivityAt || session.lastActivity || now;
+      const fileAge = now - lastActivity;
+      const isActive = fileAge < 300000;
+      
+      // Calculate progress based on activity
+      let progress = 50;
+      if (isActive) {
+        progress = Math.min(30 + Math.floor(fileAge / 60000), 85);
+      } else {
+        progress = Math.min(60 + Math.floor((now - lastActivity) / 3600000) * 10, 95);
+      }
+      
+      const timeSpent = lastActivity - createdAt;
+      
+      // Coworker agent names
+      const agentNames = ['👥 Coworker', '🤝 協作 Agent', '🔄 自動化 Agent', '⚡ 快速 Agent'];
+      const agentIndex = Math.abs(this.hashCode(agentId)) % agentNames.length;
+      const displayAgentName = agentNames[agentIndex];
+      
+      const sessionData = {
+        id: sessionId,
+        department: dept.id,
+        departmentName: dept.name,
+        agent: agentId,
+        agentDisplayName: displayAgentName,
+        taskName: session.title || session.taskName || 'Coworker 任務',
+        status: isActive ? 'active' : 'idle',
+        createdAt: createdAt,
+        updatedAt: lastActivity,
+        messages: session.messageCount || 0,
+        progress: progress,
+        timeSpent: timeSpent,
+        tools: session.tools || [],
+        model: session.model || 'Claude',
+        taskItems: [],
+        summary: {
+          title: session.initialMessage?.slice(0, 150) || (isActive ? '工作中...' : '待命')
+        }
+      };
+
+      const cacheKey = `${dept.id}-${sessionId}-${agentId}`;
+      this.sessionCache.set(cacheKey, sessionData);
+      this.datastore.saveSession(sessionData);
+      
+      this.emit('agentUpdate', sessionData);
+    } catch (error) {
+      // File might be locked or invalid JSON
     }
   }
 
@@ -472,6 +594,59 @@ export class AgentCollector extends EventEmitter {
             if (dept) {
               const fileName = path.basename(filePath);
               await this.processClaudeSession(fileName, 'project', dept);
+            }
+          }
+        });
+
+        this.watchers.push(watcher);
+      } catch {}
+    }
+
+    // Watch Claude Code Coworker
+    const coworkerWatchPaths = [
+      path.join(process.env.HOME || '/Users/peter', 'Library/Application Support/Claude/local-agent-mode-sessions'),
+      '/home/openclaw/claude-coworker/local-agent-mode-sessions'
+    ];
+
+    for (const watchPath of coworkerWatchPaths) {
+      try {
+        const exists = await fs.access(watchPath).then(() => true).catch(() => false);
+        if (!exists) continue;
+        
+        const watcher = watch(watchPath, {
+          depth: 3,
+          ignored: /^\./,
+          persistent: true
+        });
+
+        watcher.on('add', async (filePath) => {
+          if (filePath.endsWith('.json') && filePath.includes('local_')) {
+            const parts = filePath.split('/');
+            const sessionIdx = parts.indexOf('local-agent-mode-sessions');
+            if (sessionIdx !== -1) {
+              const sessionId = parts[sessionIdx + 1];
+              const uuid = parts[sessionIdx + 2];
+              const fileName = path.basename(filePath);
+              const dept = this.departments.get('claude-coworker');
+              if (dept && uuid) {
+                await this.processCoworkerSession(fileName, sessionId, uuid, dept);
+              }
+            }
+          }
+        });
+
+        watcher.on('change', async (filePath) => {
+          if (filePath.endsWith('.json') && filePath.includes('local_')) {
+            const parts = filePath.split('/');
+            const sessionIdx = parts.indexOf('local-agent-mode-sessions');
+            if (sessionIdx !== -1) {
+              const sessionId = parts[sessionIdx + 1];
+              const uuid = parts[sessionIdx + 2];
+              const fileName = path.basename(filePath);
+              const dept = this.departments.get('claude-coworker');
+              if (dept && uuid) {
+                await this.processCoworkerSession(fileName, sessionId, uuid, dept);
+              }
             }
           }
         });

@@ -15,6 +15,7 @@ export class DataStore {
     this.sessions = new Map();
     this.tasks = new Map();
     this.reports = new Map();
+    this.skills = new Map();
     this.initialize();
   }
 
@@ -32,6 +33,7 @@ export class DataStore {
       this.sessions = new Map(Object.entries(parsed.sessions || {}));
       this.tasks = new Map(Object.entries(parsed.tasks || {}));
       this.reports = new Map(Object.entries(parsed.reports || {}));
+      this.skills = new Map(Object.entries(parsed.skills || {}));
     } catch {
       // First run, no data yet
     }
@@ -41,7 +43,8 @@ export class DataStore {
     const data = {
       sessions: Object.fromEntries(this.sessions),
       tasks: Object.fromEntries(this.tasks),
-      reports: Object.fromEntries(this.reports)
+      reports: Object.fromEntries(this.reports),
+      skills: Object.fromEntries(this.skills)
     };
     
     await fs.writeFile(
@@ -145,5 +148,22 @@ export class DataStore {
     }
     
     this.saveData();
+  }
+
+  // Skills methods
+  saveSkill(skill) {
+    this.skills.set(skill.name, {
+      ...skill,
+      savedAt: Date.now()
+    });
+    this.saveData();
+  }
+
+  getSkills() {
+    return Array.from(this.skills.values());
+  }
+
+  getSkill(name) {
+    return this.skills.get(name);
   }
 }

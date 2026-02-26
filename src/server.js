@@ -3,6 +3,7 @@ import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { watch } from 'chokidar';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { AgentCollector } from './collector.js';
 import { DataStore } from './datastore.js';
@@ -29,7 +30,20 @@ class OpenClawMonitor {
 
   setupMiddleware() {
     this.app.use(express.json());
-    this.app.use(express.static(path.join(__dirname, '../web')));
+    
+    // Serve React app from dist folder if exists, otherwise fallback to HTML
+    const distPath = path.join(__dirname, '../web/dist');
+    const staticPath = path.join(__dirname, '../web');
+    
+    // Check if React build exists
+    if (fs.existsSync(path.join(distPath, 'index.html'))) {
+      this.app.use(express.static(distPath));
+      console.log('[Server] Serving React app from dist/');
+    } else {
+      this.app.use(express.static(staticPath));
+      console.log('[Server] Serving static files from web/');
+    }
+    
     this.app.use((req, res, next) => {
       res.header('Access-Control-Allow-Origin', '*');
       res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -41,13 +55,26 @@ class OpenClawMonitor {
     const api = new APIRouter(this.datastore, this.notifier, this.collector);
     this.app.use('/api', api.router);
     
-    this.app.get('/dashboard', (req, res) => {
-      res.sendFile(path.join(__dirname, '../web/dashboard.html'));
-    });
+    // Check if React build exists
+    const distPath = path.join(__dirname, '../web/dist');
+    const indexPath = path.join(distPath, 'index.html');
     
-    this.app.get('/', (req, res) => {
-      res.redirect('/dashboard');
-    });
+    if (fs.existsSync(indexPath)) {
+      // React SPA: serve index.html for all non-API routes
+      this.app.get('/api/*', (req, res) => res.status(404).json({ error: 'Not found' }));
+      this.app.get('*', (req, res) => {
+        res.sendFile(indexPath);
+      });
+    } else {
+      // Fallback to old HTML dashboard
+      this.app.get('/dashboard', (req, res) => {
+        res.sendFile(path.join(__dirname, '../web/dashboard.html'));
+      });
+      
+      this.app.get('/', (req, res) => {
+        res.redirect('/dashboard');
+      });
+    }
   }
 
   setupWebSocket() {

@@ -212,6 +212,96 @@ export class APIRouter {
       res.json({ success: true });
     });
 
+    // Agent Skills - Get all agent profiles with skills
+    this.router.get('/agents/skills', (req, res) => {
+      const skills = this.datastore.getSkills();
+      res.json(skills);
+    });
+
+    // Agent Skills - Sync skills from local folders
+    this.router.post('/agents/sync-skills', async (req, res) => {
+      try {
+        const skillsDir = path.join(process.cwd(), 'skills');
+        const agentProfiles = [];
+        
+        // Scan skills directories
+        const skillDirs = ['openclaw', 'claude-code'];
+        
+        for (const dir of skillDirs) {
+          const dirPath = path.join(skillsDir, dir);
+          try {
+            const entries = await fs.readdir(dirPath, { withFileTypes: true });
+            
+            for (const entry of entries) {
+              if (entry.isFile() && (entry.name.endsWith('.py') || entry.name.endsWith('.js') || entry.name.endsWith('.ts'))) {
+                const filePath = path.join(dirPath, entry.name);
+                const content = await fs.readFile(filePath, 'utf-8');
+                
+                // Extract skill name from filename
+                const skillName = entry.name
+                  .replace(/\.(py|js|ts)$/, '')
+                  .replace(/[-_]/g, ' ')
+                  .replace(/\b\w/g, c => c.toUpperCase());
+                
+                // Extract capability score from comments
+                // Look for @capability: [number] in comments
+                const capabilityMatch = content.match(/(?:#|\/\/)\s*@capability:\s*(\d+)/i);
+                const score = capabilityMatch ? parseInt(capabilityMatch[1]) : 70;
+                
+                // Extract description from comments
+                // Look for @description: in comments
+                const descMatch = content.match(/(?:#|\/\/)\s*@description:\s*(.+)/i);
+                const description = descMatch ? descMatch[1].trim() : `Ability to perform ${skillName}`;
+                
+                agentProfiles.push({
+                  skill: skillName,
+                  score,
+                  description,
+                  source: dir,
+                  file: entry.name
+                });
+              }
+            }
+          } catch (e) {
+            console.log(`[Skills] Directory not found: ${dirPath}`);
+          }
+        }
+        
+        // Aggregate skills by name (combine scores from different sources)
+        const aggregatedSkills = {};
+        for (const skill of agentProfiles) {
+          if (!aggregatedSkills[skill.skill]) {
+            aggregatedSkills[skill.skill] = {
+              name: skill.skill,
+              score: skill.score,
+              description: skill.description,
+              sources: [skill.source]
+            };
+          } else {
+            // Average the scores
+            const existing = aggregatedSkills[skill.skill];
+            existing.score = Math.round((existing.score + skill.score) / 2);
+            existing.sources.push(skill.source);
+          }
+        }
+        
+        // Save to datastore
+        const skillsList = Object.values(aggregatedSkills);
+        for (const skill of skillsList) {
+          this.datastore.saveSkill(skill);
+        }
+        
+        res.json({ 
+          success: true, 
+          count: skillsList.length,
+          skills: skillsList
+        });
+      } catch (error) {
+        console.error('[Skills] Sync error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // SSE for real-time updates
     this.router.get('/stream', (req, res) => {
       res.setHeader('Content-Type', 'text/event-stream');
