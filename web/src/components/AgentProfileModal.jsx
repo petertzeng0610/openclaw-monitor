@@ -1,34 +1,26 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   X, RefreshCw, User, Cpu, DollarSign, 
-  Sparkles, Clock, CheckCircle
+  Sparkles, Clock, CheckCircle, Wifi
 } from 'lucide-react'
 import { 
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, Tooltip
 } from 'recharts'
+import useBridgeSkills from '../hooks/useBridgeSkills'
 
 const API_BASE = '/api'
 
-// Generate mock skills based on agent type
-const generateAgentSkills = (agentType, existingSkills = []) => {
-  const baseSkills = [
-    { name: 'Code Review', score: 85, description: '程式碼審查與漏洞檢測' },
-    { name: 'Log Analysis', score: 78, description: '日誌分析與異常偵測' },
-    { name: 'Documentation', score: 65, description: '技術文件撰寫' },
-    { name: 'Testing', score: 72, description: '自動化測試' },
-    { name: 'DevOps', score: 68, description: '部署與維運' },
-    { name: 'Security', score: 90, description: '資安分析與滲透測試' },
-  ]
-  
-  // Add random variation based on agent ID
-  const variation = (agentType || '').length % 10
-  return baseSkills.map(skill => ({
-    ...skill,
-    score: Math.min(100, Math.max(40, skill.score + variation - 5))
-  }))
-}
+// Default skill categories for radar chart
+const DEFAULT_SKILLS = [
+  { name: 'Code Review', score: 70, description: '程式碼審查與漏洞檢測' },
+  { name: 'Log Analysis', score: 65, description: '日誌分析與異常偵測' },
+  { name: 'Documentation', score: 60, description: '技術文件撰寫' },
+  { name: 'Testing', score: 68, description: '自動化測試' },
+  { name: 'DevOps', score: 62, description: '部署與維運' },
+  { name: 'Security', score: 75, description: '資安分析與滲透測試' },
+]
 
 // Map agent types to job titles
 const agentJobTitles = {
@@ -51,6 +43,10 @@ const agentModels = {
 export default function AgentProfileModal({ agent, isOpen, onClose, skills = [] }) {
   const [syncing, setSyncing] = useState(false)
   const [localSkills, setLocalSkills] = useState([])
+  const [prevSkills, setPrevSkills] = useState([])
+  
+  // Use bridge skills hook
+  const { bridgeSkills, bridgeAgents, lastSync, isPolling, refetch } = useBridgeSkills()
   
   // Get job title based on agent type
   const jobTitle = agentJobTitles[agent?.agent] || agentJobTitles['default']
@@ -58,22 +54,49 @@ export default function AgentProfileModal({ agent, isOpen, onClose, skills = [] 
   const billingType = agent?.agent === 'claude-coworker' ? '按量計費' : '訂閱制'
   const baseCost = agent?.agent === 'claude-coworker' ? 0 : 20
 
-  useEffect(() => {
-    if (isOpen && skills.length > 0) {
-      setLocalSkills(skills.slice(0, 6)) // Use up to 6 skills for radar
-    } else if (isOpen && agent) {
-      // Generate mock skills if no backend skills
-      setLocalSkills(generateAgentSkills(agent.agent, skills))
+  // Merge skills: bridge skills > prop skills > default
+  const mergedSkills = useMemo(() => {
+    if (bridgeSkills.length > 0) {
+      return bridgeSkills.slice(0, 6).map((skill, idx) => ({
+        ...DEFAULT_SKILLS[idx] || {},
+        ...skill,
+        score: skill.score || DEFAULT_SKILLS[idx]?.score || 70
+      }))
     }
-  }, [isOpen, agent, skills])
+    if (skills.length > 0) {
+      return skills.slice(0, 6)
+    }
+    return DEFAULT_SKILLS
+  }, [bridgeSkills, skills])
+
+  useEffect(() => {
+    if (isOpen) {
+      // Store previous skills for animation
+      setPrevSkills(localSkills)
+      setLocalSkills(mergedSkills)
+    }
+  }, [isOpen, mergedSkills])
+
+  // Animate when skills change
+  useEffect(() => {
+    if (isOpen && JSON.stringify(prevSkills) !== JSON.stringify(mergedSkills)) {
+      const timer = setTimeout(() => {
+        setLocalSkills(mergedSkills)
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [mergedSkills, isOpen])
 
   const handleSyncSkills = async () => {
     setSyncing(true)
     try {
-      const res = await fetch(`${API_BASE}/agents/sync-skills`, { method: 'POST' })
-      const data = await res.json()
-      if (data.skills) {
-        setLocalSkills(data.skills.slice(0, 6))
+      await refetch()
+      const data = await fetch(`${API_BASE}/bridge/status`, {
+        headers: { 'x-auth-token': 'nova-bridge-secret-2024' }
+      }).then(r => r.json())
+      
+      if (data.agents || data.skills) {
+        setLocalSkills(mergedSkills)
       }
     } catch (err) {
       console.error('Failed to sync skills:', err)
@@ -177,6 +200,17 @@ export default function AgentProfileModal({ agent, isOpen, onClose, skills = [] 
                 <h3 className="text-sm text-gray-400 flex items-center gap-2">
                   <Sparkles className="w-4 h-4" />
                   技能矩陣 (Skill Matrix)
+                  {isPolling && (
+                    <span className="flex items-center gap-1 text-xs text-emerald-400">
+                      <Wifi className="w-3 h-3 animate-pulse" />
+                      即時同步中
+                    </span>
+                  )}
+                  {lastSync && (
+                    <span className="text-xs text-gray-500">
+                      最後更新: {new Date(lastSync).toLocaleTimeString()}
+                    </span>
+                  )}
                 </h3>
                 <button
                   onClick={handleSyncSkills}
@@ -208,6 +242,8 @@ export default function AgentProfileModal({ agent, isOpen, onClose, skills = [] 
                         stroke="#8884d8"
                         fill="#8884d8"
                         fillOpacity={0.6}
+                        animationDuration={800}
+                        animationEasing="ease-out"
                       />
                       <Tooltip
                         contentStyle={{
@@ -236,21 +272,29 @@ export default function AgentProfileModal({ agent, isOpen, onClose, skills = [] 
                 <h3 className="text-sm text-gray-400 mb-3">技能詳情</h3>
                 <div className="space-y-2">
                   {localSkills.map((skill, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-3 glass rounded-lg">
+                    <motion.div 
+                      key={idx}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.1 }}
+                      className="flex items-center justify-between p-3 glass rounded-lg"
+                    >
                       <div>
                         <p className="text-sm font-medium">{skill.name}</p>
                         <p className="text-xs text-gray-500">{skill.description}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="w-24 h-2 bg-gray-700 rounded-full overflow-hidden">
-                          <div 
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${skill.score}%` }}
+                            transition={{ duration: 0.8, ease: 'easeOut', delay: idx * 0.1 }}
                             className="h-full bg-gradient-to-r from-violet-500 to-purple-500"
-                            style={{ width: `${skill.score}%` }}
                           />
                         </div>
                         <span className="text-sm font-medium w-8 text-right">{skill.score}</span>
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
                 </div>
               </div>
