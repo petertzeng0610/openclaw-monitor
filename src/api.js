@@ -9,8 +9,28 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN || 'nova-bridge-secret-2024';
 
 const bridgeCache = {
   agents: [],
-  lastSync: null
+  lastSync: null,
+  lastAgentDataUpdate: null
 };
+
+// Department mapping based on agent_id prefix
+const departmentMap = {
+  'finance': '財務部',
+  'marketing': '行銷部',
+  'engineering': '工程部',
+  'support': '客服部',
+  'sales': '銷售部',
+  'hr': '人資部',
+  'openclaw': 'openclaw',
+  'claude-code': 'claude',
+  'claude-coworker': 'claude-coworker'
+};
+
+function detectDepartment(agentId) {
+  if (!agentId) return 'default';
+  const prefix = agentId.split('-')[0].toLowerCase();
+  return departmentMap[prefix] || 'default';
+}
 
 export class APIRouter {
   constructor(datastore, notifier, collector) {
@@ -358,6 +378,98 @@ export class APIRouter {
       });
     });
 
+    // V1 - Sync agent data from Bridge
+    this.router.post('/v1/sync-agent-data', (req, res) => {
+      try {
+        const { agent_id, skills, status, task_name, metadata } = req.body;
+        
+        if (!agent_id) {
+          return res.status(400).json({ error: 'Missing agent_id' });
+        }
+
+        const department = detectDepartment(agent_id);
+        const now = Date.now();
+
+        // Create or update session for this agent
+        const sessionId = `bridge_${agent_id}_${Date.now()}`;
+        const session = {
+          id: sessionId,
+          agentId: agent_id,
+          agent: agent_id,
+          agentDisplayName: agent_id,
+          department: department,
+          taskName: task_name || 'Idle',
+          status: status || 'active',
+          summary: { title: metadata?.description || 'Received from Bridge' },
+          progress: metadata?.progress || 0,
+          messages: metadata?.messages || 0,
+          skills: skills || [],
+          updatedAt: now,
+          source: 'bridge',
+          metadata: metadata || {}
+        };
+
+        // Save to datastore
+        this.datastore.saveSession(session);
+
+        // Update bridge cache
+        const existingAgentIndex = bridgeCache.agents.findIndex(a => a.agent_id === agent_id);
+        const agentData = {
+          agent_id,
+          department,
+          skills: skills || [],
+          status: status || 'active',
+          task_name: task_name,
+          metadata,
+          lastUpdate: now
+        };
+
+        if (existingAgentIndex >= 0) {
+          bridgeCache.agents[existingAgentIndex] = agentData;
+        } else {
+          bridgeCache.agents.push(agentData);
+        }
+
+        bridgeCache.lastSync = now;
+        bridgeCache.lastAgentDataUpdate = now;
+
+        // Emit SSE event for real-time update
+        const eventData = {
+          type: 'agent-data-updated',
+          timestamp: now,
+          agent: agentData,
+          department: department
+        };
+
+        // Store event for SSE clients (handled by server)
+        if (global.broadcastAgentUpdate) {
+          global.broadcastAgentUpdate(eventData);
+        }
+
+        console.log(`[V1] Synced agent: ${agent_id} -> Department: ${department}`);
+
+        res.json({ 
+          success: true, 
+          agent_id,
+          department,
+          timestamp: now,
+          message: `Agent data synced to ${department}`
+        });
+      } catch (error) {
+        console.error('[V1] Sync error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // V1 - Get all synced agents
+    this.router.get('/v1/agents', (req, res) => {
+      res.json({
+        agents: bridgeCache.agents,
+        lastSync: bridgeCache.lastSync,
+        lastAgentDataUpdate: bridgeCache.lastAgentDataUpdate
+      });
+    });
+
     // SSE for real-time updates
     this.router.get('/stream', (req, res) => {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -375,8 +487,37 @@ export class APIRouter {
         sendEvent({ type: 'heartbeat', timestamp: Date.now() });
       }, 30000);
 
+      // Also send last agent data update if exists
+      if (bridgeCache.lastAgentDataUpdate) {
+        sendEvent({ 
+          type: 'agent-data-updated', 
+          timestamp: bridgeCache.lastAgentDataUpdate,
+          agents: bridgeCache.agents
+        });
+      }
+
+      // Store this client's sendEvent for broadcasting
+      if (!global.sseClients) global.sseClients = [];
+      global.sseClients.push(sendEvent);
+
+      // Setup global broadcast function
+      global.broadcastAgentUpdate = (data) => {
+        if (global.sseClients) {
+          global.sseClients.forEach(client => {
+            try {
+              client(data);
+            } catch (e) {
+              console.log('[SSE] Client error:', e.message);
+            }
+          });
+        }
+      };
+
       req.on('close', () => {
         clearInterval(interval);
+        if (global.sseClients) {
+          global.sseClients = global.sseClients.filter(c => c !== sendEvent);
+        }
       });
     });
   }
