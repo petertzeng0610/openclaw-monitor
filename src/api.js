@@ -5,6 +5,13 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const AUTH_TOKEN = process.env.AUTH_TOKEN || 'nova-bridge-secret-2024';
+
+const bridgeCache = {
+  agents: [],
+  lastSync: null
+};
+
 export class APIRouter {
   constructor(datastore, notifier, collector) {
     this.datastore = datastore;
@@ -300,6 +307,55 @@ export class APIRouter {
         console.error('[Skills] Sync error:', error);
         res.status(500).json({ error: error.message });
       }
+    });
+
+    // Bridge Auth Middleware
+    this.router.use('/bridge', (req, res, next) => {
+      const token = req.headers['x-auth-token'] || req.query['auth_token'];
+      
+      if (!token || token !== AUTH_TOKEN) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid or missing AUTH_TOKEN' });
+      }
+      next();
+    });
+
+    // Bridge - Sync skills from local Bridge
+    this.router.post('/bridge/sync-skills', (req, res) => {
+      try {
+        const { agents, skills } = req.body;
+        
+        // Cache agents data
+        if (agents && Array.isArray(agents)) {
+          bridgeCache.agents = agents;
+        }
+        
+        // Also save skills if provided
+        if (skills && Array.isArray(skills)) {
+          for (const skill of skills) {
+            this.datastore.saveSkill(skill);
+          }
+        }
+        
+        bridgeCache.lastSync = Date.now();
+        
+        res.json({ 
+          success: true, 
+          message: 'Skills synced successfully',
+          cachedAgents: bridgeCache.agents.length,
+          lastSync: bridgeCache.lastSync
+        });
+      } catch (error) {
+        console.error('[Bridge] Sync error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Bridge - Get cached data (also requires auth)
+    this.router.get('/bridge/status', (req, res) => {
+      res.json({
+        agents: bridgeCache.agents,
+        lastSync: bridgeCache.lastSync
+      });
     });
 
     // SSE for real-time updates
