@@ -5,7 +5,7 @@ import {
   AlertTriangle, Pause, Play, Settings, MoreVertical,
   RefreshCw, LayoutGrid, List, Bell, Search,
   ChevronDown, Shield, Cpu, Clock, CheckCircle, XCircle,
-  Home
+  Home, MessageSquare
 } from 'lucide-react'
 import { useSettings, calculateMetrics } from './hooks/useSettings'
 import SettingsPage from './pages/SettingsPage'
@@ -13,6 +13,7 @@ import AgentProfileModal from './components/AgentProfileModal'
 import TaskCenter from './pages/TaskCenter'
 import OverviewPage from './pages/OverviewPage'
 import EmployeesPage from './pages/EmployeesPage'
+import ChatPage from './pages/ChatPage'
 
 // API Base URL - will be proxied by Vite in dev
 const API_BASE = '/api'
@@ -418,6 +419,7 @@ function Sidebar({ activeView, setActiveView, collapsed, setCollapsed, notificat
     { id: 'employees', label: 'AI 員工', icon: Users },
     { id: 'tasks', label: '任務中心', icon: Activity },
     { id: 'notifications', label: '異常通知', icon: Bell },
+    { id: 'chat', label: 'AI 助手', icon: MessageSquare },
     { id: 'settings', label: '設定', icon: Settings },
   ]
 
@@ -434,7 +436,7 @@ function Sidebar({ activeView, setActiveView, collapsed, setCollapsed, notificat
             N
           </div>
           {!collapsed && (
-            <span className="font-bold gradient-text">Nova AI</span>
+            <span className="font-bold gradient-text">Across AI Workforce</span>
           )}
         </div>
       </div>
@@ -641,6 +643,7 @@ function App() {
               {activeView === 'tasks' && '任務中心'}
               {activeView === 'settings' && '系統設定'}
               {activeView === 'notifications' && '異常通知'}
+              {activeView === 'chat' && 'AI 助手'}
             </h1>
             <p className="text-sm text-gray-400">
               即時監控 {sessions.length} 個 AI Agent 運作狀態
@@ -687,7 +690,9 @@ function App() {
         </header>
 
         {/* Content based on active view */}
-        {activeView === 'settings' ? (
+        {activeView === 'chat' ? (
+          <ChatPage />
+        ) : activeView === 'settings' ? (
           <SettingsPage 
             settings={settings}
             onUpdate={updateSettings}

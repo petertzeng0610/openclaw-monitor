@@ -1,6 +1,12 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -468,6 +474,219 @@ export class APIRouter {
         lastSync: bridgeCache.lastSync,
         lastAgentDataUpdate: bridgeCache.lastAgentDataUpdate
       });
+    });
+
+    // ============ CHAT / SKILLS ROUTES ============
+
+    const chatTasks = {};
+    const chatHistory = [];
+
+    const SKILLS_LIST = [
+      { name: "coding-agent", label: "程式開發代理", emoji: "🧩", description: "透過 Codex/Claude Code/OpenCode 進行程式開發" },
+      { name: "gemini", label: "Gemini 問答", emoji: "✨", description: "使用 Gemini 進行問答、摘要與內容生成" },
+      { name: "github", label: "GitHub 操作", emoji: "🐙", description: "透過 gh CLI 管理 Issues、PR、CI" },
+      { name: "gog", label: "Google 工具", emoji: "📧", description: "Gmail、日曆、雲端硬碟、試算表、文件" },
+      { name: "healthcheck", label: "資安檢查", emoji: "🔒", description: "主機資安強化與風險評估" },
+      { name: "skill-creator", label: "技能建立器", emoji: "🛠️", description: "建立或更新 Agent 技能套件" },
+      { name: "ui-ux-pro-max", label: "UI/UX 設計", emoji: "🎨", description: "AI 驅動的設計系統產生器" },
+      { name: "video-frames", label: "影片擷取", emoji: "🎬", description: "從影片中擷取畫面或短片段" },
+      { name: "weather", label: "天氣查詢", emoji: "🌤️", description: "查詢天氣與天氣預報" },
+      { name: "ai-ppt-generator", label: "AI 簡報產生器", emoji: "📊", description: "產生專業 PowerPoint 簡報" }
+    ];
+
+    this.router.get('/skills', (req, res) => {
+      res.json(SKILLS_LIST);
+    });
+
+    // Helper: read OpenClaw gateway config
+    const getGatewayConfig = () => {
+      try {
+        const configPath = path.join(homedir(), '.openclaw', 'openclaw.json');
+        return JSON.parse(readFileSync(configPath, 'utf-8'));
+      } catch { return null; }
+    };
+
+    // Helper: Connect to OpenClaw Gateway via WebSocket JSON-RPC
+    const sendToOpenClaw = async (message, timeoutMs = 120000) => {
+      const config = getGatewayConfig();
+      const token = config?.gateway?.auth?.token;
+      if (!token) throw new Error('No gateway token');
+
+      const { default: WebSocket } = await import('ws');
+      return new Promise((resolve, reject) => {
+        const ws = new WebSocket('ws://localhost:18789/ws', { headers: { 'Origin': 'http://localhost:18789', 'Host': 'localhost:18789' } });
+        const timer = setTimeout(() => { ws.close(); reject(new Error('Gateway timeout')); }, timeoutMs);
+        let connected = false;
+        let chatRunId = null;
+        let streamedText = '';
+        let gotAssistantDelta = false;
+        let reqId = null;
+
+        ws.on('open', () => { /* wait for challenge */ });
+
+        ws.on('message', (raw) => {
+          try {
+            const data = JSON.parse(raw.toString());
+            
+            // Step 1: Handle connect.challenge - respond with connect
+            if (data.type === 'event' && data.event === 'connect.challenge') {
+              ws.send(JSON.stringify({
+                type: 'req',
+                id: 'connect-1',
+                method: 'connect',
+                params: {
+                  minProtocol: 3,
+                  maxProtocol: 3,
+                  client: { id: 'webchat', version: '1.0.0', platform: 'node', mode: 'webchat', instanceId: 'dashboard-' + Date.now() },
+                  role: 'operator',
+                  scopes: ['operator.admin'],
+                  auth: { token },
+                  userAgent: 'openclaw-dashboard/1.0'
+                }
+              }));
+              return;
+            }
+
+            // Step 2: Handle connect response - then send chat message
+            if (data.type === 'res' && data.id === 'connect-1') {
+              if (!data.ok) {
+                clearTimeout(timer);
+                ws.close();
+                return reject(new Error('Gateway auth failed: ' + (data.error?.message || 'unknown')));
+              }
+              connected = true;
+              reqId = 'chat-' + Date.now();
+              // Track the runId from chat events
+              chatRunId = null;
+              // Use main session - the agent processes requests here
+              const dashSessionKey = 'agent:main:main';
+              const idempotencyKey = `dash-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+              ws.send(JSON.stringify({
+                type: 'req',
+                id: reqId,
+                method: 'chat.send',
+                params: {
+                  sessionKey: dashSessionKey,
+                  message,
+                  deliver: false,
+                  idempotencyKey
+                }
+              }));
+              return;
+            }
+
+            // Step 3: Handle chat.send response
+            if (data.type === 'res' && data.id === reqId) {
+              console.log('[Chat WS] chat.send response:', data.ok ? 'OK' : 'FAIL', JSON.stringify(data.error || ''));
+              if (!data.ok) {
+                clearTimeout(timer);
+                ws.close();
+                reject(new Error('chat.send failed: ' + (data.error?.message || 'unknown')));
+              }
+              return;
+            }
+            
+            // Log all events for debugging
+            if (data.type === 'event') {
+              console.log('[Chat WS] event:', data.event, data.payload?.state || '', data.payload?.sessionKey || '');
+            }
+
+            // Step 4: Collect chat stream events
+            if (data.type === 'event' && data.event === 'chat') {
+              const payload = data.payload;
+              if (payload?.sessionKey !== 'agent:main:main') return;
+              
+              if (payload?.state === 'delta') {
+                // Extract accumulated text from delta - text is cumulative in each delta
+                const content = payload?.message?.content;
+                if (Array.isArray(content)) {
+                  const textParts = content.filter(c => c.type === 'text').map(c => c.text);
+                  if (textParts.length > 0) {
+                    streamedText = textParts.join('');
+                    gotAssistantDelta = true;
+                  }
+                }
+              } else if (payload?.state === 'final' && gotAssistantDelta) {
+                // Only resolve when we've received actual assistant content
+                clearTimeout(timer);
+                ws.close();
+                resolve(streamedText || '任務已完成。');
+                return;
+              } else if (payload?.state === 'error') {
+                clearTimeout(timer);
+                ws.close();
+                reject(new Error(payload?.errorMessage || 'Chat error'));
+                return;
+              }
+              // Ignore 'final' without assistant content (that's just the user message ack)
+            }
+
+          } catch (e) {
+            console.log('[Chat WS] Parse error:', e.message);
+          }
+        });
+
+        ws.on('error', (err) => { clearTimeout(timer); reject(err); });
+        ws.on('close', () => { clearTimeout(timer); });
+      });
+    };
+
+    this.router.post('/chat/send', async (req, res) => {
+      const { skill, message } = req.body;
+      if (!skill || !message) {
+        return res.status(400).json({ error: 'Missing skill or message' });
+      }
+
+      const skillInfo = SKILLS_LIST.find(s => s.name === skill);
+      const taskId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      chatTasks[taskId] = { status: 'running', skill, message, startedAt: Date.now(), result: null };
+
+      // Store user message in history
+      chatHistory.push({ role: 'user', content: message, skill, timestamp: Date.now() });
+      if (chatHistory.length > 100) chatHistory.shift();
+
+      // Send to OpenClaw gateway via WebSocket and wait for response
+      (async () => {
+        try {
+          const prompt = `請使用 ${skillInfo?.label || skill} 技能來完成以下需求：${message}`;
+          console.log(`[Chat] Sending to OpenClaw: skill=${skill}, taskId=${taskId}`);
+          
+          const result = await sendToOpenClaw(prompt, 120000);
+
+          chatTasks[taskId].status = 'completed';
+          chatTasks[taskId].result = result;
+          console.log(`[Chat] Task ${taskId} completed, result length: ${result.length}`);
+
+          chatHistory.push({ role: 'assistant', content: result, skill, timestamp: Date.now() });
+          if (chatHistory.length > 100) chatHistory.shift();
+        } catch (err) {
+          console.log(`[Chat] Task ${taskId} error:`, err.message);
+          chatTasks[taskId].status = 'error';
+          chatTasks[taskId].result = `❌ 執行失敗：${err.message}\n\n請確認 OpenClaw Gateway 正在運行中。`;
+          chatHistory.push({ role: 'assistant', content: chatTasks[taskId].result, skill, timestamp: Date.now() });
+        }
+      })();
+
+      res.json({ taskId, status: 'running' });
+    });
+
+    this.router.get('/chat/status/:taskId', (req, res) => {
+      const task = chatTasks[req.params.taskId];
+      if (!task) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+
+      // Timeout after 2 minutes
+      if (task.status === 'running' && Date.now() - task.startedAt > 120000) {
+        task.status = 'error';
+        task.result = '⏰ 任務執行逾時，請稍後再試。';
+      }
+
+      res.json({ taskId: req.params.taskId, status: task.status, result: task.result, skill: task.skill });
+    });
+
+    this.router.get('/chat/history', (req, res) => {
+      res.json(chatHistory);
     });
 
     // SSE for real-time updates
