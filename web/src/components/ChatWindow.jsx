@@ -22,6 +22,7 @@ function LoadingDots() {
 
 export default function ChatWindow({ messages, isLoading, onSend }) {
   const [input, setInput] = useState('')
+  const [isComposing, setIsComposing] = useState(false)
   const listRef = useRef(null)
 
   useEffect(() => {
@@ -31,9 +32,27 @@ export default function ChatWindow({ messages, isLoading, onSend }) {
   }, [messages, isLoading])
 
   const handleSend = () => {
-    if (!input.trim()) return
+    if (!input.trim() || isLoading) return
     onSend(input.trim())
     setInput('')
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (isComposing) {
+        e.preventDefault()
+        return
+      }
+      handleSend()
+    }
+  }
+
+  const handleCompositionStart = (e) => {
+    setIsComposing(true)
+  }
+
+  const handleCompositionEnd = (e) => {
+    setIsComposing(false)
   }
 
   return (
@@ -71,9 +90,12 @@ export default function ChatWindow({ messages, isLoading, onSend }) {
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            placeholder="輸入訊息..."
-            className="flex-1 glass px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 bg-white/5 border border-white/10"
+            onKeyDown={handleKeyDown}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
+            placeholder={isLoading ? "處理中..." : "輸入訊息... (輸入完按 Enter 送出)"}
+            disabled={isLoading}
+            className="flex-1 glass px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 bg-white/5 border border-white/10 disabled:opacity-50"
           />
           <button
             onClick={handleSend}
