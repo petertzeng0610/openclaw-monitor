@@ -166,4 +166,24 @@ export class DataStore {
   getSkill(name) {
     return this.skills.get(name);
   }
+
+  // Chat Skills methods (for AI Assistant)
+  saveChatSkills(skills) {
+    try {
+      const chatSkillsPath = path.join(DATA_DIR, 'chat-skills.json');
+      fs.writeFileSync(chatSkillsPath, JSON.stringify(skills, null, 2));
+    } catch (err) {
+      console.error('[DataStore] Failed to save chat skills:', err);
+    }
+  }
+
+  getChatSkills() {
+    try {
+      const chatSkillsPath = path.join(DATA_DIR, 'chat-skills.json');
+      const data = fs.readFileSync(chatSkillsPath, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
 }

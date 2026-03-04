@@ -1,16 +1,33 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Filter } from 'lucide-react'
 import { useChat } from '../hooks/useChat'
 import SkillCard from '../components/SkillCard'
 import ChatWindow from '../components/ChatWindow'
 
+const DEPARTMENTS = [
+  { id: 'all', name: '全部', emoji: '🌟' },
+  { id: 'general', name: '一般', emoji: '📁' },
+  { id: 'engineering', name: '工程', emoji: '💻' },
+  { id: 'design', name: '設計', emoji: '🎨' },
+  { id: 'marketing', name: '行銷', emoji: '📢' },
+  { id: 'sales', name: '銷售', emoji: '💰' },
+  { id: 'security', name: '資安', emoji: '🔒' },
+  { id: 'media', name: '媒體', emoji: '🎬' },
+  { id: 'finance', name: '財務', emoji: '📊' },
+]
+
 export default function ChatPage() {
   const { messages, selectedSkill, isLoading, skills, fetchSkills, sendMessage, selectSkill, clearSkill } = useChat()
+  const [selectedDept, setSelectedDept] = useState('all')
 
   useEffect(() => {
-    fetchSkills()
-  }, [fetchSkills])
+    fetchSkills(selectedDept === 'all' ? null : selectedDept)
+  }, [fetchSkills, selectedDept])
+
+  const filteredSkills = selectedDept === 'all' 
+    ? skills 
+    : skills.filter(s => s.department === selectedDept)
 
   return (
     <div className="h-[calc(100vh-120px)] flex flex-col">
@@ -24,7 +41,7 @@ export default function ChatPage() {
             className="flex-1 overflow-y-auto"
           >
             {/* Welcome */}
-            <div className="text-center mb-8">
+            <div className="text-center mb-6">
               <motion.h2
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -35,9 +52,27 @@ export default function ChatPage() {
               <p className="text-gray-400">選擇一個 AI 助手功能開始</p>
             </div>
 
+            {/* Department Filter */}
+            <div className="flex items-center gap-2 mb-6 px-4 overflow-x-auto pb-2">
+              <Filter className="w-4 h-4 text-gray-500 flex-shrink-0" />
+              {DEPARTMENTS.map((dept) => (
+                <button
+                  key={dept.id}
+                  onClick={() => setSelectedDept(dept.id)}
+                  className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors ${
+                    selectedDept === dept.id 
+                      ? 'bg-violet-600 text-white' 
+                      : 'glass hover:bg-white/10'
+                  }`}
+                >
+                  {dept.emoji} {dept.name}
+                </button>
+              ))}
+            </div>
+
             {/* Skill Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {skills.map((skill, i) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 px-4">
+              {filteredSkills.map((skill, i) => (
                 <motion.div
                   key={skill.name}
                   initial={{ opacity: 0, y: 20 }}
@@ -48,6 +83,13 @@ export default function ChatPage() {
                 </motion.div>
               ))}
             </div>
+            
+            {filteredSkills.length === 0 && (
+              <div className="text-center py-12 text-gray-500">
+                <p>該部門暫無技能</p>
+                <p className="text-sm mt-2">請至「技能設定」頁面新增技能</p>
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div
@@ -66,9 +108,12 @@ export default function ChatPage() {
                 <ArrowLeft className="w-5 h-5 text-gray-400" />
               </button>
               <span className="text-2xl">{selectedSkill.emoji}</span>
-              <div>
+              <div className="flex-1">
                 <h3 className="font-semibold">{selectedSkill.label}</h3>
                 <p className="text-xs text-gray-400">{selectedSkill.description}</p>
+              </div>
+              <div className="text-xs text-gray-500">
+                📂 {selectedSkill.workspace || 'main'}
               </div>
             </div>
 

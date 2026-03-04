@@ -6,24 +6,16 @@ export function useChat() {
   const [messages, setMessages] = useState([])
   const [selectedSkill, setSelectedSkill] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [skills, setSkills] = useState([
-    { name: "coding-agent", label: "程式開發代理", emoji: "🧩", description: "透過 Codex/Claude Code/OpenCode 進行程式開發" },
-    { name: "gemini", label: "Gemini 問答", emoji: "✨", description: "使用 Gemini 進行問答、摘要與內容生成" },
-    { name: "github", label: "GitHub 操作", emoji: "🐙", description: "透過 gh CLI 管理 Issues、PR、CI" },
-    { name: "gog", label: "Google 工具", emoji: "📧", description: "Gmail、日曆、雲端硬碟、試算表、文件" },
-    { name: "healthcheck", label: "資安檢查", emoji: "🔒", description: "主機資安強化與風險評估" },
-    { name: "skill-creator", label: "技能建立器", emoji: "🛠️", description: "建立或更新 Agent 技能套件" },
-    { name: "ui-ux-pro-max", label: "UI/UX 設計", emoji: "🎨", description: "AI 驅動的設計系統產生器" },
-    { name: "video-frames", label: "影片擷取", emoji: "🎬", description: "從影片中擷取畫面或短片段" },
-    { name: "weather", label: "天氣查詢", emoji: "🌤️", description: "查詢天氣與天氣預報" },
-    { name: "ai-ppt-generator", label: "AI 簡報產生器", emoji: "📊", description: "產生專業 PowerPoint 簡報" }
-  ])
+  const [skills, setSkills] = useState([])
   const [currentTaskId, setCurrentTaskId] = useState(null)
   const pollRef = useRef(null)
 
-  const fetchSkills = useCallback(async () => {
+  const fetchSkills = useCallback(async (department = null) => {
     try {
-      const res = await fetch(`${API_BASE}/skills`)
+      const url = department 
+        ? `${API_BASE}/skills?department=${department}`
+        : `${API_BASE}/skills`
+      const res = await fetch(url)
       const data = await res.json()
       if (Array.isArray(data) && data.length > 0) setSkills(data)
     } catch (err) {

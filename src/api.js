@@ -481,21 +481,189 @@ export class APIRouter {
     const chatTasks = {};
     const chatHistory = [];
 
-    const SKILLS_LIST = [
-      { name: "coding-agent", label: "程式開發代理", emoji: "🧩", description: "透過 Codex/Claude Code/OpenCode 進行程式開發" },
-      { name: "gemini", label: "Gemini 問答", emoji: "✨", description: "使用 Gemini 進行問答、摘要與內容生成" },
-      { name: "github", label: "GitHub 操作", emoji: "🐙", description: "透過 gh CLI 管理 Issues、PR、CI" },
-      { name: "gog", label: "Google 工具", emoji: "📧", description: "Gmail、日曆、雲端硬碟、試算表、文件" },
-      { name: "healthcheck", label: "資安檢查", emoji: "🔒", description: "主機資安強化與風險評估" },
-      { name: "skill-creator", label: "技能建立器", emoji: "🛠️", description: "建立或更新 Agent 技能套件" },
-      { name: "ui-ux-pro-max", label: "UI/UX 設計", emoji: "🎨", description: "AI 驅動的設計系統產生器" },
-      { name: "video-frames", label: "影片擷取", emoji: "🎬", description: "從影片中擷取畫面或短片段" },
-      { name: "weather", label: "天氣查詢", emoji: "🌤️", description: "查詢天氣與天氣預報" },
-      { name: "ai-ppt-generator", label: "AI 簡報產生器", emoji: "📊", description: "產生專業 PowerPoint 簡報" }
+    // Default skills (used if datastore is empty)
+    const DEFAULT_SKILLS = [
+      { name: "coding-agent", label: "程式開發代理", emoji: "🧩", description: "透過 Codex/Claude Code/OpenCode 進行程式開發", department: "engineering", workspace: "main" },
+      { name: "gemini", label: "Gemini 問答", emoji: "✨", description: "使用 Gemini 進行問答、摘要與內容生成", department: "general", workspace: "main" },
+      { name: "github", label: "GitHub 操作", emoji: "🐙", description: "透過 gh CLI 管理 Issues、PR、CI", department: "engineering", workspace: "main" },
+      { name: "gog", label: "Google 工具", emoji: "📧", description: "Gmail、日曆、雲端硬碟、試算表、文件", department: "general", workspace: "main" },
+      { name: "healthcheck", label: "資安檢查", emoji: "🔒", description: "主機資安強化與風險評估", department: "security", workspace: "main" },
+      { name: "skill-creator", label: "技能建立器", emoji: "🛠️", description: "建立或更新 Agent 技能套件", department: "engineering", workspace: "main" },
+      { name: "ui-ux-pro-max", label: "UI/UX 設計", emoji: "🎨", description: "AI 驅動的設計系統產生器", department: "design", workspace: "main" },
+      { name: "video-frames", label: "影片擷取", emoji: "🎬", description: "從影片中擷取畫面或短片段", department: "media", workspace: "main" },
+      { name: "weather", label: "天氣查詢", emoji: "🌤️", description: "查詢天氣與天氣預報", department: "general", workspace: "main" },
+      { name: "ai-ppt-generator", label: "AI 簡報產生器", emoji: "📊", description: "產生專業 PowerPoint 簡報", department: "general", workspace: "main" }
     ];
 
+    // In-memory skills list (loaded from datastore on startup)
+    let SKILLS_LIST = [];
+
+    // Load skills from datastore
+    const loadSkills = () => {
+      try {
+        const storedSkills = this.datastore.getChatSkills();
+        if (storedSkills && storedSkills.length > 0) {
+          SKILLS_LIST = storedSkills;
+        } else {
+          SKILLS_LIST = [...DEFAULT_SKILLS];
+          this.datastore.saveChatSkills(SKILLS_LIST);
+        }
+      } catch (err) {
+        console.log('[Skills] Using defaults:', err.message);
+        SKILLS_LIST = [...DEFAULT_SKILLS];
+      }
+    };
+    loadSkills();
+
+    // Get skills (with optional department filter)
     this.router.get('/skills', (req, res) => {
+      const { department } = req.query;
+      if (department) {
+        return res.json(SKILLS_LIST.filter(s => s.department === department));
+      }
       res.json(SKILLS_LIST);
+    });
+
+    // Add new skill
+    this.router.post('/skills', (req, res) => {
+      const { name, label, emoji, description, department, workspace } = req.body;
+      if (!name || !label) {
+        return res.status(400).json({ error: 'Missing name or label' });
+      }
+      if (SKILLS_LIST.find(s => s.name === name)) {
+        return res.status(400).json({ error: 'Skill already exists' });
+      }
+      const newSkill = { 
+        name, 
+        label, 
+        emoji: emoji || '🔧', 
+        description: description || '', 
+        department: department || 'general',
+        workspace: workspace || 'main',
+        createdAt: Date.now()
+      };
+      SKILLS_LIST.push(newSkill);
+      this.datastore.saveChatSkills(SKILLS_LIST);
+      res.json({ success: true, skill: newSkill });
+    });
+
+    // Update skill
+    this.router.patch('/skills/:name', (req, res) => {
+      const { name } = req.params;
+      const skillIndex = SKILLS_LIST.findIndex(s => s.name === name);
+      if (skillIndex < 0) {
+        return res.status(404).json({ error: 'Skill not found' });
+      }
+      const { label, emoji, description, department, workspace } = req.body;
+      SKILLS_LIST[skillIndex] = {
+        ...SKILLS_LIST[skillIndex],
+        ...(label && { label }),
+        ...(emoji && { emoji }),
+        ...(description && { description }),
+        ...(department && { department }),
+        ...(workspace && { workspace }),
+        updatedAt: Date.now()
+      };
+      this.datastore.saveChatSkills(SKILLS_LIST);
+      res.json({ success: true, skill: SKILLS_LIST[skillIndex] });
+    });
+
+    // Delete skill
+    this.router.delete('/skills/:name', (req, res) => {
+      const { name } = req.params;
+      const skillIndex = SKILLS_LIST.findIndex(s => s.name === name);
+      if (skillIndex < 0) {
+        return res.status(404).json({ error: 'Skill not found' });
+      }
+      SKILLS_LIST.splice(skillIndex, 1);
+      this.datastore.saveChatSkills(SKILLS_LIST);
+      res.json({ success: true });
+    });
+
+    // Test skill (verify it works)
+    this.router.post('/skills/:name/test', async (req, res) => {
+      const { name } = req.params;
+      const skill = SKILLS_LIST.find(s => s.name === name);
+      if (!skill) {
+        return res.status(404).json({ error: 'Skill not found' });
+      }
+      
+      try {
+        const testMessage = `測試 ${skill.label} 技能，請回覆「OK」確認功能正常`;
+        const result = await sendToOpenClaw(testMessage, 30000, skill.workspace);
+        res.json({ success: true, result: 'OK - Skill 功能正常', output: result });
+      } catch (err) {
+        // Check if it's a missing package error
+        if (err.message.includes('not found') || err.message.includes('module')) {
+          res.json({ 
+            success: false, 
+            error: '缺少必要套件', 
+            message: err.message,
+            autoInstall: true 
+          });
+        } else {
+          res.json({ success: false, error: err.message });
+        }
+      }
+    });
+
+    // Install skill dependencies
+    this.router.post('/skills/:name/install', async (req, res) => {
+      const { name } = req.params;
+      const { packages } = req.body;
+      const skill = SKILLS_LIST.find(s => s.name === name);
+      if (!skill) {
+        return res.status(404).json({ error: 'Skill not found' });
+      }
+
+      try {
+        // Execute npm install for the skill
+        const { execSync } = await import('child_process');
+        const skillsDir = path.join(process.cwd(), 'skills', name);
+        
+        // Create skills directory if not exists
+        try {
+          execSync(`mkdir -p "${skillsDir}"`, { stdio: 'pipe' });
+        } catch (e) {}
+
+        // Install packages
+        if (packages && packages.length > 0) {
+          const pkgString = packages.join(' ');
+          execSync(`cd "${skillsDir}" && npm install ${pkgString}`, { stdio: 'inherit' });
+        }
+
+        res.json({ success: true, message: '套件安裝完成' });
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+
+    // Get all departments
+    this.router.get('/departments/list', (req, res) => {
+      const departments = [...new Set(SKILLS_LIST.map(s => s.department))];
+      res.json(departments.map(d => ({ 
+        id: d, 
+        name: d.charAt(0).toUpperCase() + d.slice(1),
+        skills: SKILLS_LIST.filter(s => s.department === d)
+      })));
+    });
+
+    // Get workspaces
+    this.router.get('/workspaces', (req, res) => {
+      const workspaces = [...new Set(SKILLS_LIST.map(s => s.workspace).filter(Boolean))];
+      res.json(workspaces);
+    });
+
+    // Update workspace config
+    this.router.post('/workspaces', (req, res) => {
+      const { name, config } = req.body;
+      if (!name) {
+        return res.status(400).json({ error: 'Missing workspace name' });
+      }
+      // Store workspace config
+      if (!global.workspaceConfigs) global.workspaceConfigs = {};
+      global.workspaceConfigs[name] = { ...config, updatedAt: Date.now() };
+      res.json({ success: true });
     });
 
     // Helper: read OpenClaw gateway config
@@ -507,7 +675,7 @@ export class APIRouter {
     };
 
     // Helper: Connect to OpenClaw Gateway via WebSocket JSON-RPC
-    const sendToOpenClaw = async (message, timeoutMs = 120000) => {
+    const sendToOpenClaw = async (message, timeoutMs = 120000, workspace = 'main') => {
       const config = getGatewayConfig();
       const token = config?.gateway?.auth?.token;
       if (!token) throw new Error('No gateway token');
@@ -559,7 +727,7 @@ export class APIRouter {
               // Track the runId from chat events
               chatRunId = null;
               // Use main session - the agent processes requests here
-              const dashSessionKey = 'agent:main:main';
+              const dashSessionKey = `agent:${workspace}:main`;
               const idempotencyKey = `dash-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
               ws.send(JSON.stringify({
                 type: 'req',
@@ -638,8 +806,9 @@ export class APIRouter {
       }
 
       const skillInfo = SKILLS_LIST.find(s => s.name === skill);
+      const workspace = skillInfo?.workspace || 'main';
       const taskId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      chatTasks[taskId] = { status: 'running', skill, message, startedAt: Date.now(), result: null };
+      chatTasks[taskId] = { status: 'running', skill, message, workspace, startedAt: Date.now(), result: null };
 
       // Store user message in history
       chatHistory.push({ role: 'user', content: message, skill, timestamp: Date.now() });
@@ -649,9 +818,9 @@ export class APIRouter {
       (async () => {
         try {
           const prompt = `請使用 ${skillInfo?.label || skill} 技能來完成以下需求：${message}`;
-          console.log(`[Chat] Sending to OpenClaw: skill=${skill}, taskId=${taskId}`);
+          console.log(`[Chat] Sending to OpenClaw: skill=${skill}, workspace=${workspace}, taskId=${taskId}`);
           
-          const result = await sendToOpenClaw(prompt, 120000);
+          const result = await sendToOpenClaw(prompt, 120000, workspace);
 
           chatTasks[taskId].status = 'completed';
           chatTasks[taskId].result = result;
@@ -667,7 +836,7 @@ export class APIRouter {
         }
       })();
 
-      res.json({ taskId, status: 'running' });
+      res.json({ taskId, status: 'running', workspace });
     });
 
     this.router.get('/chat/status/:taskId', (req, res) => {

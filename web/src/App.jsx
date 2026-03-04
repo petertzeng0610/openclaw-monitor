@@ -5,10 +5,11 @@ import {
   AlertTriangle, Pause, Play, Settings, MoreVertical,
   RefreshCw, LayoutGrid, List, Bell, Search,
   ChevronDown, Shield, Cpu, Clock, CheckCircle, XCircle,
-  Home, MessageSquare
+  Home, MessageSquare, Wrench
 } from 'lucide-react'
 import { useSettings, calculateMetrics } from './hooks/useSettings'
 import SettingsPage from './pages/SettingsPage'
+import SkillsSettingsPage from './pages/SkillsSettingsPage'
 import AgentProfileModal from './components/AgentProfileModal'
 import TaskCenter from './pages/TaskCenter'
 import OverviewPage from './pages/OverviewPage'
@@ -420,6 +421,7 @@ function Sidebar({ activeView, setActiveView, collapsed, setCollapsed, notificat
     { id: 'tasks', label: '任務中心', icon: Activity },
     { id: 'notifications', label: '異常通知', icon: Bell },
     { id: 'chat', label: 'AI 助手', icon: MessageSquare },
+    { id: 'skills', label: '技能設定', icon: Wrench },
     { id: 'settings', label: '設定', icon: Settings },
   ]
 
@@ -692,6 +694,8 @@ function App() {
         {/* Content based on active view */}
         {activeView === 'chat' ? (
           <ChatPage />
+        ) : activeView === 'skills' ? (
+          <SkillsSettingsPage />
         ) : activeView === 'settings' ? (
           <SettingsPage 
             settings={settings}
